@@ -1,0 +1,9 @@
+{
+  "name": "create_api_structure",
+  "steps": [
+    { "action": "create_folder", "target": "{target}/endpoints" },
+    { "action": "create_folder", "target": "{target}/models" },
+    { "action": "create_file", "target": "{target}/endpoints/__init__.py", "content": "" },
+    { "action": "create_file", "target": "{target}/models/__init__.py", "content": "" }
+  ]
+}

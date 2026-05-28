@@ -1,0 +1,19 @@
+# VICTOR Core Backend Framework
+fastapi==0.103.2
+uvicorn==0.23.2
+pydantic==2.4.2
+httpx==0.25.0
+python-dotenv==1.0.0
+
+# AI, Vector Memory, & Semantic Processing
+faiss-cpu==1.7.4
+sentence-transformers==2.7.0
+numpy==1.26.0
+
+# User Interface & Terminal Styling
+rich==13.6.0
+
+# VICTOR v4: Browser Automation & Web Intelligence Engine
+playwright==1.42.0
+beautifulsoup4==4.12.3
+requests==2.31.0

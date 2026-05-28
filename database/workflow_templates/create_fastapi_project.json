@@ -1,0 +1,11 @@
+{
+  "name": "create_fastapi_project",
+  "steps": [
+    { "action": "create_folder", "target": "{target}/app/routers" },
+    { "action": "create_folder", "target": "{target}/app/services" },
+    { "action": "create_file", "target": "{target}/app/__init__.py", "content": "# API Package Initialization\n" },
+    { "action": "create_file", "target": "{target}/app/main.py", "content": "from fastapi import FastAPI\n\napp = FastAPI(title='{target} Microservice')\n\n@app.get('/')\ndef read_root():\n    return {'status': 'online', 'service': '{target}'}\n" },
+    { "action": "create_file", "target": "{target}/requirements.txt", "content": "fastapi>=0.100.0\nuvicorn>=0.22.0\n" },
+    { "action": "create_file", "target": "{target}/Dockerfile", "content": "FROM python:3.11-slim\nWORKDIR /code\nCOPY ./requirements.txt /code/requirements.txt\nRUN pip install --no-cache-dir --upgrade -r /code/requirements.txt\nCOPY ./app /code/app\nCMD [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"80\"]\n" }
+  ]
+}

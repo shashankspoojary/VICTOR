@@ -1,0 +1,37 @@
+{
+    "name": "browser_research_workflow",
+    "description": "Complex workflow that combines localized search parameters and landing page parsing tasks.",
+    "version": "4.0.0",
+    "steps": [
+        {
+            "step": 1,
+            "action": "navigate",
+            "selector": "",
+            "value": "https://www.google.com"
+        },
+        {
+            "step": 2,
+            "action": "fill",
+            "selector": "textarea[name='q'], input[name='q']",
+            "value": "{research_topic}"
+        },
+        {
+            "step": 3,
+            "action": "wait",
+            "selector": "",
+            "value": "1000"
+        },
+        {
+            "step": 4,
+            "action": "navigate",
+            "selector": "",
+            "value": "{target_landing_url}"
+        },
+        {
+            "step": 5,
+            "action": "wait",
+            "selector": "",
+            "value": "3000"
+        }
+    ]
+}

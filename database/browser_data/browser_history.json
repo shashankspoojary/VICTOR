@@ -1,0 +1,14 @@
+[
+    {
+        "timestamp": "2026-05-26T00:51:20.829562",
+        "url": "https://www.google.com",
+        "title": "Google",
+        "status": "WORKFLOW_STEP_0"
+    },
+    {
+        "timestamp": "2026-05-26T00:51:27.107068",
+        "url": "https://www.google.com/search?q=latest+updates+on+quantum+computing&sca_esv=f21e304c56ab1b64&source=hp&ei=L6EUao-6JaKhnesP1f2SeQ&iflsig=AFdpzrgAAAAAahSvP0bLLcE-yFniTrWmKDVFTY4W5akC&ved=0ahUKEwjPjYPElNWUAxWiUGcHHdW-JA8Q4dUDCDE&uact=5&oq=latest+updates+on+quantum+computing&gs_lp=Egdnd3Mtd2l6IiNsYXRlc3QgdXBkYXRlcyBvbiBxdWFudHVtIGNvbXB1dGluZ0glUABYAHAAeACQAQCYAQCgAQCqAQC4AQPIAQD4AQGYAgCgAgCYAwCSBwCgBwCyBwC4BwDCBwDIBwCACAE&sclient=gws-wiz&sei=MKEUapaVMaupvr0Pif-k2Qs",
+        "title": "latest updates on quantum computing - Google Search",
+        "status": "WORKFLOW_GOOGLE_SEARCH_COMPLETE"
+    }
+]

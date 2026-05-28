@@ -1,0 +1,9 @@
+{
+  "name": "debug_python_project",
+  "steps": [
+    {
+      "action": "execute_terminal",
+      "target": "python -m pytest {target}"
+    }
+  ]
+}

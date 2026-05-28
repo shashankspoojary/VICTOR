@@ -1,0 +1,9 @@
+{
+  "name": "create_cli_app",
+  "steps": [
+    { "action": "create_folder", "target": "{target}/src" },
+    { "action": "create_file", "target": "{target}/src/__init__.py", "content": "" },
+    { "action": "create_file", "target": "{target}/src/cli.py", "content": "import argparse\n\ndef main():\n    parser = argparse.ArgumentParser(description='{target} CLI Utilities')\n    parser.add_argument('--execute', type=str, help='Target operational task instruction')\n    args = parser.parse_args()\n    print(f'VICTOR Client Processing Node: {args.execute}')\n\nif __name__ == \"__main__\":\n    main()\n" },
+    { "action": "create_file", "target": "{target}/setup.py", "content": "from setuptools import setup, find_packages\n\nsetup(\n    name='{target}',\n    version='0.1.0',\n    packages=find_packages(),\n    entry_points={\n        'console_scripts': [\n            '{target}=src.cli:main',\n        ],\n    },\n)\n" }
+  ]
+}

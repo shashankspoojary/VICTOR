@@ -1,0 +1,18 @@
+# Environments
+venv/
+env/
+.env
+
+# Python Caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Application Data (Keep the folders, ignore the generated contents)
+database/chats_data/*.json
+database/vector_store/*.index
+
+# OS generated files
+.DS_Store
+Thumbs.db

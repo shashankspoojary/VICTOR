@@ -1,0 +1,31 @@
+{
+    "name": "google_search",
+    "description": "Performs an automated query search on Google and presses Enter.",
+    "version": "4.0.1",
+    "steps": [
+        {
+            "step": 1,
+            "action": "navigate",
+            "selector": "",
+            "value": "https://www.google.com"
+        },
+        {
+            "step": 2,
+            "action": "fill",
+            "selector": "textarea[name='q'], input[name='q']",
+            "value": "{query}"
+        },
+        {
+            "step": 3,
+            "action": "press",
+            "selector": "textarea[name='q'], input[name='q']",
+            "value": "Enter"
+        },
+        {
+            "step": 4,
+            "action": "wait",
+            "selector": "",
+            "value": "2000"
+        }
+    ]
+}

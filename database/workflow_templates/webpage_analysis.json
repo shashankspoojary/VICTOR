@@ -1,0 +1,19 @@
+{
+    "name": "webpage_analysis",
+    "description": "Routes the active context to a target site and pauses to gather structural DOM details.",
+    "version": "4.0.0",
+    "steps": [
+        {
+            "step": 1,
+            "action": "navigate",
+            "selector": "",
+            "value": "{url}"
+        },
+        {
+            "step": 2,
+            "action": "wait",
+            "selector": "",
+            "value": "3000"
+        }
+    ]
+}

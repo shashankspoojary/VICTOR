@@ -1,0 +1,24 @@
+{
+  "name": "create_python_project",
+  "steps": [
+    {
+      "action": "create_folder",
+      "target": "{target}"
+    },
+    {
+      "action": "create_file",
+      "target": "{target}/main.py",
+      "content": "def main():\n    print('Hello World')\n\nif __name__ == '__main__':\n    main()\n"
+    },
+    {
+      "action": "create_file",
+      "target": "{target}/requirements.txt",
+      "content": "# Add dependencies here\n"
+    },
+    {
+      "action": "create_file",
+      "target": "{target}/README.md",
+      "content": "# {target}\n\nProject initialized by VICTOR v2."
+    }
+  ]
+}

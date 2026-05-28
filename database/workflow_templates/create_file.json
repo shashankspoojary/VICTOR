@@ -1,0 +1,10 @@
+{
+  "name": "create_file",
+  "steps": [
+    {
+      "action": "create_file",
+      "target": "{target}",
+      "content": "# Operational workspace definition component\n"
+    }
+  ]
+}

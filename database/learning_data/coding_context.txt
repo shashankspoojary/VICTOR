@@ -1,0 +1,5 @@
+VICTOR Coding Principles:
+1. Prioritize modular design over monolithic patterns. Every newly written component must maintain clear separation of responsibilities.
+2. Ensure functional methods are strictly typed with comprehensive documentation strings mapping unexpected validation parameters.
+3. Keep dependency footprint light. Leverage core default Python structures before adding optional libraries.
+4. Avoid nested loops, unhandled generic Exception traps, or open file streams. Use modern pathlib architectures.

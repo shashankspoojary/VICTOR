@@ -1,0 +1,31 @@
+{
+    "name": "ai_website_interaction",
+    "description": "Automates submitting user prompts and inputs into specific interactive web elements.",
+    "version": "4.0.0",
+    "steps": [
+        {
+            "step": 1,
+            "action": "navigate",
+            "selector": "",
+            "value": "{target_url}"
+        },
+        {
+            "step": 2,
+            "action": "fill",
+            "selector": "{input_selector}",
+            "value": "{prompt_payload}"
+        },
+        {
+            "step": 3,
+            "action": "click",
+            "selector": "{submit_selector}",
+            "value": ""
+        },
+        {
+            "step": 4,
+            "action": "wait",
+            "selector": "",
+            "value": "4000"
+        }
+    ]
+}

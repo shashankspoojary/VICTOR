@@ -1,0 +1,5 @@
+[2026-05-24T23:05:24.347429] CWD: D:\VICTOR\workspace | CMD: python TaskManagerEngine/app/services/task_processor.py | CODE: 2
+STDERR:
+C:\Users\Lenovo\AppData\Local\Programs\Python\Python311\python.exe: can't open file 'D:\\VICTOR\\workspace\\TaskManagerEngine\\app\\services\\task_processor.py': [Errno 2] No such file or directory
+
+----------------------------------------

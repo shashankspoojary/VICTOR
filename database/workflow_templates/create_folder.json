@@ -1,0 +1,9 @@
+{
+  "name": "create_folder",
+  "steps": [
+    {
+      "action": "create_folder",
+      "target": "{target}"
+    }
+  ]
+}

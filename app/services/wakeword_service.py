@@ -1,31 +1,34 @@
 # app/services/wakeword_service.py
-import asyncio
-from app.services.voice_input_service import VoiceInputService
+from typing import Tuple
 
 class WakewordService:
     def __init__(self):
-        self.voice_input = VoiceInputService()
-        self.wake_words = ["victor"]
-        self.is_listening = False
+        # Configurable lists for state transitions
+        self.wake_words = ["victor", "wake up", "hey victor", "listen up"]
+        self.sleep_words = ["end session", "see you later", "stop listening", "go to sleep", "goodbye", "pause session"]
 
-    async def start_listening(self, callback) -> None:
+    def analyze_phrase(self, text: str) -> Tuple[str, str]:
         """
-        Background loop waiting for the wake word.
-        When detected, fires the callback to activate the main pipeline.
+        Analyzes streaming text for wake or sleep commands.
+        Returns: 
+            command_type: 'WAKE', 'SLEEP', or 'NONE'
+            cleaned_text: The remaining text payload after stripping the trigger word.
         """
-        self.is_listening = True
-        print(f"[WAKEWORD] System active. Listening for: {self.wake_words}")
+        text_lower = text.lower().strip()
         
-        while self.is_listening:
-            try:
-                text = await self.voice_input.listen(timeout=2, phrase_time_limit=3)
-                if text:
-                    text_lower = text.lower()
-                    if any(word in text_lower for word in self.wake_words):
-                        print(f"[WAKEWORD] Wake phrase detected in: '{text}'")
-                        await callback()
-            except Exception:
-                await asyncio.sleep(0.5)
+        # 1. Check for termination/sleep commands
+        for word in self.sleep_words:
+            if word in text_lower:
+                return 'SLEEP', ""
 
-    def stop_listening(self):
-        self.is_listening = False
+        # 2. Check for activation/wake commands
+        for word in self.wake_words:
+            if word in text_lower or text_lower.startswith(word):
+                # Extract the actual command by stripping the wake word
+                clean_payload = text_lower.replace(word, "", 1).strip()
+                # Clean up residual punctuation from speech recognition (e.g., "Victor, do this" -> "do this")
+                clean_payload = clean_payload.strip(",.!? ")
+                return 'WAKE', clean_payload
+        
+        # No triggers detected
+        return 'NONE', text

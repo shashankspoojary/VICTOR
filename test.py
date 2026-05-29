@@ -1,3 +1,4 @@
+# test.py
 import uuid
 import asyncio
 import httpx
@@ -16,9 +17,9 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style
 
-# V5: Voice System Core Infrastructure
 from app.services.brain_service import BrainService
 from app.services.speech_pipeline_service import SpeechPipelineService
+from app.services.wakeword_service import WakewordService
 from app.utils.voice_utils import sanitize_for_tts
 
 # =========================================
@@ -41,15 +42,15 @@ MENU_ITEMS = [
 current_mode_index = 0
 current_selection_index = 0
 
-voice_input_enabled = False
+# Default behavior: Always listen, wait for Wakeword
+voice_input_enabled = True 
 voice_output_enabled = False
+active_voice_session = False  # Tracks if VICTOR is actively conversing via voice
+
 show_mode_panel = False
 hide_panel_task = None 
 
 
-# =========================================
-# BANNER DISPLAY
-# =========================================
 def print_banner():
     banner = r"""
 ██╗   ██╗██╗ ██████╗████████╗ ██████╗ ██████╗
@@ -64,13 +65,8 @@ Versatile Intelligent Cognitive Tactical Operational Response
     console.print(f"[bold cyan]{banner}[/bold cyan]")
 
 
-# =========================================
-# SYSTEM-WIDE STREAM SPLITTER UTILITY
-# =========================================
 async def process_streaming_tts(buffer_text: str, output_service) -> str:
-    """Analyzes accumulated text, extracts complete sentences, and passes them to TTS."""
     sentences = re.split(r'(?<=[.!?])\s+|\n', buffer_text)
-    
     if sentences and not sentences[-1].endswith(('.', '!', '?')):
         remaining_buffer = sentences.pop()
     else:
@@ -84,22 +80,12 @@ async def process_streaming_tts(buffer_text: str, output_service) -> str:
     return remaining_buffer
 
 
-# =========================================
-# STREAM RESPONSE (Standard & Realtime)
-# =========================================
-async def stream_response(
-    session_id: str,
-    message: str,
-    use_search: bool,
-    output_service,
-    voice_output_enabled: bool
-):
+async def stream_response(session_id: str, message: str, use_search: bool, output_service, active_tts: bool):
     payload = {
         "session_id": session_id,
         "message": message,
         "use_search": use_search
     }
-
     full_text = ""
     sentence_buffer = ""
 
@@ -115,11 +101,11 @@ async def stream_response(
                             full_text += chunk
                             live.update(format_bot_message(full_text))
 
-                            if voice_output_enabled and output_service:
+                            if active_tts and output_service:
                                 sentence_buffer += chunk
                                 sentence_buffer = await process_streaming_tts(sentence_buffer, output_service)
 
-        if voice_output_enabled and output_service and sentence_buffer.strip():
+        if active_tts and output_service and sentence_buffer.strip():
             clean_text = sanitize_for_tts(sentence_buffer)
             if len(clean_text) > 1:
                 await output_service.speak(clean_text)
@@ -128,18 +114,14 @@ async def stream_response(
         console.print("[bold red]ERROR:[/bold red] Unable to connect to VICTOR backend server.")
     except Exception as e:
         console.print(f"[bold red]System Processing Error:[/bold red] {str(e)}")
-
     console.print()
 
 
-# =========================================
-# ASYNC CONCURRENT MICROPHONE MONITOR
-# =========================================
 async def continuous_mic_monitor(session, speech_pipeline):
-    """Monitors incoming background voice queries concurrently without blocking user text input."""
+    """Monitors incoming background voice queries continuously."""
     while True:
         try:
-            if MODES[current_mode_index] == "VOICE MODE" or voice_input_enabled:
+            if voice_input_enabled:
                 speech_pipeline.input_service.start_continuous_listening()
                 phrase = await speech_pipeline.input_service.get_next_phrase()
                 
@@ -153,76 +135,51 @@ async def continuous_mic_monitor(session, speech_pipeline):
         await asyncio.sleep(0.05)
 
 
-# =========================================
-# FUZZY NATURAL SYSTEM COMMAND INTERCEPTOR
-# =========================================
 async def intercept_system_state_command(user_input: str, speech_pipeline) -> str:
-    """
-    Parses conversational phrasings flexibly using keyword matching heuristic paths.
-    Executes changes client-side instantly and requests unique system report phrasing from the brain.
-    """
     global current_mode_index, voice_input_enabled, voice_output_enabled
     clean = user_input.lower().strip().replace("-", " ")
 
-    # 1. Check for Exit/Quit Request
     if clean in ["exit", "quit", "exit system", "quit system"]:
         speech_pipeline.output_service.stop()
         return "EXIT"
 
     event_context = None
 
-    # 2. Check for Realtime Search Mode Requests
     if ("realtime" in clean or "real time" in clean) and ("mode" in clean or "search" in clean or "switch" in clean or "activate" in clean or "enable" in clean):
         current_mode_index = 1
         event_context = "User switched the execution layout to Realtime Internet Search Mode."
 
-    # 3. Check for Standard Mode Requests
     elif "standard" in clean and ("mode" in clean or "switch" in clean or "revert" in clean or "activate" in clean or "enable" in clean):
         current_mode_index = 0
         event_context = "User reverted system operations back to Standard Processing Mode."
 
-    # 4. Check for Voice Mode Override Requests
     elif "voice" in clean and ("mode" in clean or "switch" in clean or "activate" in clean or "enable" in clean):
         current_mode_index = 2
         voice_input_enabled = True
         voice_output_enabled = True
         event_context = "User locked operations into full interactive Voice Mode, initializing continuous microphone tracking and audio speech synthesis."
 
-    # 5. Check for Voice Input/Microphone Toggles
     elif "mic" in clean or "microphone" in clean or "voice input" in clean:
         if any(act in clean for act in ["on", "enable", "activate", "start", "turn on"]):
-            if current_mode_index == 2:
-                console.print("[bold yellow]Action Denied: Microphone locked ON while inside Voice Mode.[/bold yellow]")
-                return "HANDLED"
             voice_input_enabled = True
             event_context = "User turned on the microphone array to enable continuous voice input processing."
         elif any(act in clean for act in ["off", "disable", "stop", "deactivate", "turn off"]):
-            if current_mode_index == 2:
-                console.print("[bold yellow]Action Denied: Microphone locked ON while inside Voice Mode.[/bold yellow]")
-                return "HANDLED"
             voice_input_enabled = False
             speech_pipeline.input_service.stop_continuous_listening()
             event_context = "User deactivated the microphone array, shutting down background voice listening loops."
 
-    # 6. Check for Voice Output/TTS Toggles
     elif "tts" in clean or "speaker" in clean or "voice output" in clean or "reading" in clean:
         if any(act in clean for act in ["on", "enable", "activate", "start", "turn on"]):
             voice_output_enabled = True
             event_context = "User enabled the speaker array and text-to-speech audio feedback feedback loop."
         elif any(act in clean for act in ["off", "disable", "stop", "deactivate", "turn off"]):
-            if current_mode_index == 2:
-                console.print("[bold yellow]Action Denied: Voice Output locked ON while inside Voice Mode.[/bold yellow]")
-                return "HANDLED"
             voice_output_enabled = False
             speech_pipeline.output_service.stop()
-            event_context = "User turned off text-to-speech feedback, siloncing vocal outputs."
+            event_context = "User turned off text-to-speech feedback, silencing vocal outputs."
 
-    # Process Dynamic Evaluation if an Event Match hit
     if event_context:
         speech_pipeline.output_service.stop()
         dynamic_report = await speech_pipeline.brain_service.generate_system_report(event_context)
-        
-        # Output colorization matching action intent
         prefix = "🔊" if voice_output_enabled else "🔇"
         console.print(f"[bold green]{prefix} {dynamic_report}[/bold green]")
         
@@ -233,11 +190,8 @@ async def intercept_system_state_command(user_input: str, speech_pipeline) -> st
     return "PROCESS_LLM"
 
 
-# =========================================
-# APPLICATION CORE ENTRY INTERFACE
-# =========================================
 async def main():
-    global current_mode_index, current_selection_index, voice_input_enabled, voice_output_enabled, show_mode_panel, hide_panel_task
+    global current_mode_index, current_selection_index, voice_input_enabled, voice_output_enabled, show_mode_panel, hide_panel_task, active_voice_session
 
     console.clear()
     print_system_status("Initializing VICTOR Terminal Interface...")
@@ -252,6 +206,7 @@ async def main():
 
     brain = BrainService()
     speech_pipeline = SpeechPipelineService(brain)
+    wakeword_service = WakewordService()
 
     bindings = KeyBindings()
 
@@ -293,12 +248,10 @@ async def main():
 
     @bindings.add("enter")
     def _(event):
-        global current_selection_index, show_mode_panel, current_mode_index, voice_input_enabled, voice_output_enabled
-        
+        global current_selection_index, show_mode_panel
         if show_mode_panel:
             selection = MENU_ITEMS[current_selection_index]
             show_mode_panel = False
-            # Route layout configurations directly down into the event breakout string parser
             event.app.exit(result=f"__v5_menu_selection__:{selection}")
         else:
             event.app.current_buffer.validate_and_handle()
@@ -307,11 +260,12 @@ async def main():
         mode_str = MODES[current_mode_index]
         mic_str = "ON" if voice_input_enabled else "OFF"
         tts_str = "ON" if voice_output_enabled else "OFF"
+        session_str = "[AWAKE]" if active_voice_session else "[ASLEEP]"
 
         if not show_mode_panel:
             return HTML(
                 f'<style fg="ansibrightblack">'
-                f'[UP/DOWN] Open Cursor Menu  |  MODE: {mode_str}  |  MIC: {mic_str}  |  TTS: {tts_str}'
+                f'[UP/DOWN] Menu  |  MODE: {mode_str}  |  MIC: {mic_str} {session_str}  |  TTS: {tts_str}'
                 f'</style>'
             )
 
@@ -341,12 +295,10 @@ async def main():
 
     asyncio.create_task(continuous_mic_monitor(session, speech_pipeline))
 
-    # =====================================
-    # CONTINUOUS PROCESSING INTERFACE LOOP
-    # =====================================
     while True:
         try:
             user_input = await session.prompt_async("\nUser: ")
+            is_voice_prompt = False
 
             if not user_input or not user_input.strip():
                 continue
@@ -354,7 +306,7 @@ async def main():
             if user_input == "__v5_state_change__":
                 continue
 
-            # Intercept layout cursor changes, translate to direct action commands
+            # Menu UI Router
             if user_input.startswith("__v5_menu_selection__:"):
                 target_item = user_input.replace("__v5_menu_selection__:", "")
                 if target_item == "STANDARD MODE":
@@ -368,14 +320,46 @@ async def main():
                 elif target_item == "TOGGLE TTS (VOICE OUTPUT)":
                     user_input = "turn off voice output" if voice_output_enabled else "turn on voice output"
 
-            # Process voice phrases extracted via concurrent background queue monitor
+            # -------------------------------------------------------------
+            # WAKEWORD & VOICE STATE MACHINE ROUTING
+            # -------------------------------------------------------------
             if user_input.startswith("__voice_phrase__:"):
-                user_input = user_input.replace("__voice_phrase__:", "")
-                console.print(f"\n[bold cyan]User (Voice):[/bold cyan] {user_input}")
+                raw_voice = user_input.replace("__voice_phrase__:", "").strip()
+                cmd_type, payload = wakeword_service.analyze_phrase(raw_voice)
 
-            # Smart Heuristic Intercept Evaluation Pass
+                if not active_voice_session:
+                    if cmd_type == 'WAKE':
+                        active_voice_session = True
+                        console.print("\n[bold green]🔊 VICTOR Awake and Listening.[/bold green]")
+                        
+                        # Just activated without a command (e.g., just said "Victor")
+                        if not payload:
+                            speech_pipeline.output_service.stop()
+                            await speech_pipeline.output_service.speak("I am here. How can I help you?")
+                            continue
+                        else:
+                            # Activated WITH a command (e.g., "Victor, do this")
+                            user_input = payload
+                            is_voice_prompt = True
+                            console.print(f"\n[bold cyan]User (Voice):[/bold cyan] {user_input}")
+                    else:
+                        # Ignore ambient noise while asleep
+                        continue
+                else:
+                    if cmd_type == 'SLEEP':
+                        active_voice_session = False
+                        console.print("\n[bold yellow]🔇 VICTOR entering standby mode.[/bold yellow]")
+                        speech_pipeline.output_service.stop()
+                        await speech_pipeline.output_service.speak("Session ended. I will be listening in the background.")
+                        continue
+                    else:
+                        # Actively conversing
+                        user_input = raw_voice if cmd_type == 'NONE' else payload
+                        is_voice_prompt = True
+                        console.print(f"\n[bold cyan]User (Voice):[/bold cyan] {user_input}")
+
+            # Smart Heuristic Intercept Pass
             status = await intercept_system_state_command(user_input, speech_pipeline)
-            
             if status == "HANDLED":
                 continue  
             elif status == "EXIT":
@@ -383,27 +367,32 @@ async def main():
                 print_system_status("Terminating VICTOR session. Goodbye.")
                 break
 
-            # Core Request Route Distribution with Persistent Barge-In Hooks
-            if MODES[current_mode_index] in ["STANDARD MODE", "REALTIME SEARCH"]:
-                speech_pipeline.output_service.stop()
+            # -------------------------------------------------------------
+            # PIPELINE ROUTING
+            # -------------------------------------------------------------
+            use_search_flag = (MODES[current_mode_index] == "REALTIME SEARCH")
+            # Enforce conversational voice behavior if in Voice Mode OR in an active voice-initiated session
+            force_voice_interaction = (MODES[current_mode_index] == "VOICE MODE") or (is_voice_prompt and active_voice_session)
+            # Ensure TTS plays if globally enabled OR temporarily triggered by voice session
+            active_tts = voice_output_enabled or force_voice_interaction
 
+            if not force_voice_interaction:
+                speech_pipeline.output_service.stop()
                 await stream_response(
                     session_id=session_id,
                     message=user_input,
-                    use_search=(MODES[current_mode_index] == "REALTIME SEARCH"),
+                    use_search=use_search_flag,
                     output_service=speech_pipeline.output_service,
-                    voice_output_enabled=voice_output_enabled
+                    active_tts=active_tts
                 )
-
-            elif MODES[current_mode_index] == "VOICE MODE":
+            else:
                 try:
                     speech_pipeline.output_service.stop()
 
-                    # Direct execution bypass to enforce voice system constraints natively
                     response_generator = speech_pipeline.brain_service.process_chat(
                         session_id=session_id,
                         user_message=user_input,
-                        use_search=False,
+                        use_search=use_search_flag,
                         is_voice=True
                     )
 
@@ -416,11 +405,11 @@ async def main():
                                 full_text += chunk
                                 live.update(format_bot_message(full_text))
                                 
-                                if voice_output_enabled:
+                                if active_tts:
                                     sentence_buffer += chunk
                                     sentence_buffer = await process_streaming_tts(sentence_buffer, speech_pipeline.output_service)
 
-                    if voice_output_enabled and sentence_buffer.strip():
+                    if active_tts and sentence_buffer.strip():
                         clean_text = sanitize_for_tts(sentence_buffer)
                         if len(clean_text) > 1:
                             await speech_pipeline.output_service.speak(clean_text)

@@ -20,7 +20,7 @@ class VoiceInputService:
     def start_continuous_listening(self):
         """Spawns an efficient background thread that keeps the mic hardware open continuously."""
         if self._is_running:
-            return # STATE GUARD: Already active, protect against redundant calls
+            return 
             
         self._is_running = True
         self._loop = asyncio.get_running_loop()
@@ -38,7 +38,7 @@ class VoiceInputService:
                     # Thread-safe insertion into the main async loop's queue
                     self._loop.call_soon_threadsafe(self.audio_queue.put_nowait, text)
             except sr.UnknownValueError:
-                pass # Suppress noise spikes gracefully
+                pass 
             except sr.RequestError as e:
                 print(f"[VOICE INPUT] Cloud API Connection Issue: {e}")
 
@@ -48,12 +48,11 @@ class VoiceInputService:
             background_callback, 
             phrase_time_limit=12
         )
-        print("[VOICE INPUT] Continuous background listening stream initialized.")
 
     def stop_continuous_listening(self):
         """Gracefully disconnects from the microphone hardware handle with strict state guards."""
         if not self._is_running:
-            return # STATE GUARD: Microphone is already down, exit silently instead of spamming logs
+            return 
             
         self._is_running = False
         if self._stop_listening_fn:
@@ -66,7 +65,6 @@ class VoiceInputService:
                 self.audio_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-        print("[VOICE INPUT] Microphone deactivated cleanly.")
 
     async def get_next_phrase(self) -> Optional[str]:
         """Polls the background audio queue. Uses a short timeout to keep interface responsive."""
@@ -76,3 +74,24 @@ class VoiceInputService:
             return await asyncio.wait_for(self.audio_queue.get(), timeout=0.1)
         except asyncio.TimeoutError:
             return None
+
+    async def listen(self, timeout: int = 5, phrase_time_limit: int = 15) -> Optional[str]:
+        """
+        Atomic, discrete listening block using an async executor to prevent locking the event loop.
+        Useful for targeted script prompts outside of the continuous UI loop.
+        """
+        loop = asyncio.get_running_loop()
+        
+        def _listen_sync():
+            with sr.Microphone() as source:
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                try:
+                    audio = self.recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
+                    return self.recognizer.recognize_google(audio)
+                except (sr.WaitTimeoutError, sr.UnknownValueError):
+                    return None
+                except sr.RequestError as e:
+                    print(f"[VOICE INPUT] Cloud API Connection Issue: {e}")
+                    return None
+
+        return await loop.run_in_executor(None, _listen_sync)

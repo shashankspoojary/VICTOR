@@ -15,7 +15,6 @@ class BrainService:
         self.realtime_service = RealtimeService()
         self.groq_service = GroqService()
         
-        # V2 Integrations
         self.intent_service = IntentService(self.groq_service)
         self.assistant_service = AssistantService()
 
@@ -40,19 +39,43 @@ class BrainService:
         except Exception:
             return user_message 
 
-    async def process_chat(self, session_id: str, user_message: str, use_search: bool) -> AsyncGenerator[str, None]:
+    async def generate_system_report(self, system_event_description: str) -> str:
+        """
+        Dynamically crafts a single, unique, context-aware response confirming a state change.
+        Ensures the phrase is written to sound natural when processed by the TTS engine.
+        """
+        current_time = get_formatted_time()
+        prompt = (
+            f"You are VICTOR, behaving exactly like J.A.R.V.I.S. from Iron Man.\n"
+            f"Current Time: {current_time}\n\n"
+            f"The user has adjusted a hardware or software state parameter: {system_event_description}\n\n"
+            f"CRITICAL COMPILATION RULES:\n"
+            f"1. Respond with exactly ONE short, sophisticated confirmation sentence addressing the user as Sir or Boss.\n"
+            f"2. Employ dry wit, elegant manners, or polite British alignment. Do not repeat standard chatbot templates.\n"
+            f"3. DO NOT use any markdown symbols, bullet points, hashtags, or formatting code blocks.\n"
+            f"4. Never say the same sentence twice. Think and craft a fresh phrasing for this event.\n\n"
+            f"CONFIRMATION STATEMENT:"
+        )
         
-        # 1. V2/V4 Intent Detection Layer
+        try:
+            compiled_phrase = ""
+            # Stream the token array cleanly into a single non-static notification sentence
+            async for token in self.groq_service.stream_chat([{"role": "user", "content": prompt}]):
+                if token:
+                    compiled_phrase += token
+            return compiled_phrase.strip().replace('"', '').replace('*', '')
+        except Exception:
+            return "Adjustments finalized. All systems are stable, sir."
+
+    async def process_chat(self, session_id: str, user_message: str, use_search: bool, is_voice: bool = False) -> AsyncGenerator[str, None]:
         intent = await self.intent_service.detect(user_message, use_search)
         
         if intent == "COMMAND":
             print("[ROUTER] Intent: COMMAND - Handing off to Assistant Service")
-            # Offload completely to the task workflow pipeline
-            async for chunk in self.assistant_service.execute_pipeline(session_id, user_message):
+            async for chunk in self.assistant_service.execute_pipeline(session_id, user_message, is_voice=is_voice):
                 yield chunk
             return
 
-        # 2. V1 Chat & Search Pipeline
         memory_context = self.memory_service.retrieve_context(user_message)
         search_context = ""
         
@@ -67,6 +90,10 @@ class BrainService:
                 search_context = f"\n--- BEGIN LIVE INTERNET DATA ---\n{search_data}\n--- END LIVE INTERNET DATA ---\n"
         
         current_time = get_formatted_time()
+        voice_rules = ""
+        if is_voice:
+            voice_rules = "4. YOU ARE SPEAKING OUT LOUD. Be conversational, concise, and direct. DO NOT USE markdown, code blocks, lists, or links.\n"
+            
         system_prompt = (
             f"You are VICTOR (Virtual Intelligent Cognitive Task-Oriented Resource). "
             f"Current Time: {current_time}\n\n"
@@ -79,6 +106,7 @@ class BrainService:
             f"{search_context}\n"
             f"STRICT OUTPUT RULES:\n"
             f"1. NO THOUGHTS\n2. NO LABELS\n3. ANTI-HALLUCINATION\n"
+            f"{voice_rules}"
         )
 
         messages = self.chat_service.prepare_messages_for_ai(session_id, system_prompt, user_message)

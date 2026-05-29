@@ -16,9 +16,8 @@ class AssistantService:
         self.workflow_service = WorkflowService(self.execution_service)
         self.chat_service = ChatService()
 
-    async def execute_pipeline(self, session_id: str, user_message: str) -> AsyncGenerator[str, None]:
+    async def execute_pipeline(self, session_id: str, user_message: str, is_voice: bool = False) -> AsyncGenerator[str, None]:
         """Handles command parsing, schedules background tasks, and generates a conversational AI response."""
-        
         cmd_payload = await self.command_service.parse(session_id, user_message)
         
         action = cmd_payload.get("action", "unknown")
@@ -36,6 +35,11 @@ class AssistantService:
             execution_results = result
 
         current_time = get_formatted_time()
+        
+        voice_rules = ""
+        if is_voice:
+            voice_rules = "4. YOU ARE SPEAKING TO THE USER. Keep your summary extremely brief. Do not dictate code blocks or raw terminal outputs."
+
         system_prompt = (
             f"You are VICTOR (Virtual Intelligent Cognitive Task-Oriented Resource). "
             f"Current Time: {current_time}\n\n"
@@ -48,7 +52,8 @@ class AssistantService:
             f"INSTRUCTIONS FOR RESPONSE:\n"
             f"1. Acknowledge the completed action with JARVIS-like flair (e.g., 'I have taken the liberty of...', 'Right away, sir. The data has been secured.').\n"
             f"2. IF the execution result contains 'EXTRACTED PAGE CONTENT FOR SUMMARY', you MUST provide a detailed, highly readable bulleted summary of the key findings.\n"
-            f"3. Do NOT simply dump raw file paths or dictionary logs. Describe what was accomplished elegantly."
+            f"3. Do NOT simply dump raw file paths or dictionary logs. Describe what was accomplished elegantly.\n"
+            f"{voice_rules}"
         )
 
         messages = self.chat_service.prepare_messages_for_ai(
@@ -58,7 +63,6 @@ class AssistantService:
         )
 
         full_response = ""
-        
         async for token in self.groq_service.stream_chat(messages):
             full_response += token
             yield token

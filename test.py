@@ -196,6 +196,7 @@ async def main():
     console.clear()
     print_system_status("Initializing VICTOR Terminal Interface...")
     print_system_status("Loading Cognitive Systems...")
+    print_system_status("Loading Desktop Interaction & Environment Subsystems...")
     print_system_status("Establishing Secure Session...")
 
     session_id = str(uuid.uuid4())
@@ -332,18 +333,15 @@ async def main():
                         active_voice_session = True
                         console.print("\n[bold green]🔊 VICTOR Awake and Listening.[/bold green]")
                         
-                        # Just activated without a command (e.g., just said "Victor")
                         if not payload:
                             speech_pipeline.output_service.stop()
                             await speech_pipeline.output_service.speak("I am here. How can I help you?")
                             continue
                         else:
-                            # Activated WITH a command (e.g., "Victor, do this")
                             user_input = payload
                             is_voice_prompt = True
                             console.print(f"\n[bold cyan]User (Voice):[/bold cyan] {user_input}")
                     else:
-                        # Ignore ambient noise while asleep
                         continue
                 else:
                     if cmd_type == 'SLEEP':
@@ -353,7 +351,6 @@ async def main():
                         await speech_pipeline.output_service.speak("Session ended. I will be listening in the background.")
                         continue
                     else:
-                        # Actively conversing
                         user_input = raw_voice if cmd_type == 'NONE' else payload
                         is_voice_prompt = True
                         console.print(f"\n[bold cyan]User (Voice):[/bold cyan] {user_input}")
@@ -371,9 +368,8 @@ async def main():
             # PIPELINE ROUTING
             # -------------------------------------------------------------
             use_search_flag = (MODES[current_mode_index] == "REALTIME SEARCH")
-            # Enforce conversational voice behavior if in Voice Mode OR in an active voice-initiated session
+            
             force_voice_interaction = (MODES[current_mode_index] == "VOICE MODE") or (is_voice_prompt and active_voice_session)
-            # Ensure TTS plays if globally enabled OR temporarily triggered by voice session
             active_tts = voice_output_enabled or force_voice_interaction
 
             if not force_voice_interaction:

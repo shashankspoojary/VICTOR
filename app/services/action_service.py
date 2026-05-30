@@ -7,6 +7,7 @@ from app.services.web_extraction_service import WebExtractionService
 from app.services.webpage_analysis_service import WebpageAnalysisService
 from app.services.browser_workflow_service import BrowserWorkflowService
 from app.services.browser_memory_service import BrowserMemoryService
+from app.services.desktop_service import DesktopService
 
 class ActionService:
     """Central registry mapping declarative string actions directly to their execution service methods."""
@@ -19,6 +20,7 @@ class ActionService:
         self.extraction_service = WebExtractionService()
         self.analysis_service = WebpageAnalysisService()
         self.workflow_service = BrowserWorkflowService(self.navigation_service, self.memory_service)
+        self.desktop_service = DesktopService()
         
         self.registry = {
             "create_folder": self.local_actions.create_folder,
@@ -30,8 +32,29 @@ class ActionService:
             "browser_search": self._handle_async_search,
             "browser_navigate": self.navigation_service.navigate_to_url,
             "web_extract": self._handle_async_extraction,
-            "web_analyze": self.analysis_service.parse_page_structure
+            "web_analyze": self.analysis_service.parse_page_structure,
+            # Phase 4 Implementations utilizing Async Wrappers to bypass Synchronous Execution router limits
+            "desktop_launch": self._handle_desktop_launch,
+            "system_status": self._handle_system_status,
+            "environment_check": self._handle_environment_check,
+            "desktop_mouse": self._handle_desktop_mouse,
+            "desktop_keyboard": self._handle_desktop_keyboard
         }
+
+    async def _handle_desktop_launch(self, target: str, content: str = None):
+        return self.desktop_service.launch_application(target, content)
+
+    async def _handle_system_status(self, target: str, content: str = None):
+        return self.desktop_service.get_system_status(target, content)
+
+    async def _handle_environment_check(self, target: str, content: str = None):
+        return self.desktop_service.check_environment(target, content)
+
+    async def _handle_desktop_mouse(self, target: str, content: str = None):
+        return self.desktop_service.mouse_action(target, content)
+
+    async def _handle_desktop_keyboard(self, target: str, content: str = None):
+        return self.desktop_service.keyboard_action(target, content)
 
     async def _handle_async_search(self, query: str, custom_path: str = None) -> str:
         """Executes search workflow AND automatically saves the results to a custom or default path."""

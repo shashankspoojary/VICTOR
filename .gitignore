@@ -16,3 +16,6 @@ database/vector_store/*.index
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Multimodal Dynamic Memory
+database/multimodal_data/*.json

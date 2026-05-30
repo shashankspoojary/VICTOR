@@ -19,7 +19,7 @@ class CommandService:
             "- create_file: Simple atomic file creations. 'target' is the filepath, 'content' is the file body.\n"
             "- execute_terminal: Low-level terminal actions. 'target' is the command string.\n\n"
             "SUPPORTED DEVELOPMENT OPERATIONS (V3):\n"
-            "- create_project: Build a structured codebase workspace. 'target' is the project name. 'content' MUST be the template type ('fastapi', 'cli', 'python', 'api_structure').\n"
+            "- create_project: Build a structured codebase workspace. 'target' is the project name. 'content' MUST be the template type.\n"
             "- analyze_code: Conduct static parsing/analysis. 'target' is the project name or path. 'content' is the relative file path to analyze.\n"
             "- test_run: Safely run test commands or scripts. 'target' is the exact shell command to run. 'content' is an optional directory path.\n\n"
             "SUPPORTED BROWSER AUTOMATION OPERATIONS (V4):\n"
@@ -27,6 +27,12 @@ class CommandService:
             "- browser_navigate: Directs the browser context to a specific URL. 'target' is the full clean web destination address.\n"
             "- web_extract: Scrapes the text layer of the current active page layout. 'target' is a required short unique filename slug for saving the output markdown file.\n"
             "- web_analyze: Audits the DOM structural interactive element matrix of a web application page. 'target' is the target URL to review.\n\n"
+            "SUPPORTED DESKTOP & SYSTEM OPERATIONS (V5 PHASE 4):\n"
+            "- desktop_launch: Launch an application. 'target' is the application name (e.g., 'notepad', 'code', 'chrome').\n"
+            "- system_status: Get system metrics (CPU, RAM, Disk, Processes). 'target' can be 'status'.\n"
+            "- environment_check: Detect installed dev tools. 'target' can be 'tools'.\n"
+            "- desktop_mouse: Control mouse. 'target' is 'move', 'click', or 'position'. 'content' is 'x,y' for move (e.g. '500,500').\n"
+            "- desktop_keyboard: Control keyboard. 'target' is 'type', 'press', or 'hotkey'. 'content' is the text to type, key to press, or comma-separated hotkeys (e.g. 'ctrl,c').\n\n"
             "CRITICAL LOCATION & PATH RULES:\n"
             "1. If the user explicitly requests a specific drive or location, map it to 'content' for browser searches, or 'target' for local file tasks.\n"
             "2. ESCAPE BACKSLASHES: If a Windows path contains backslashes (\\), you MUST convert them to forward slashes (e.g., 'D:/Quantum_Research/Data') or use double backslashes (e.g., 'D:\\\\Quantum_Research\\\\Data') so the JSON does not break.\n"
@@ -41,5 +47,5 @@ class CommandService:
         try:
             return await self.groq_service.get_json_response(system_prompt, message)
         except Exception as e:
-            print(f"[CommandService V4 Parsing Exception] {e}")
+            print(f"[CommandService V5 Parsing Exception] {e}")
             return {"action": "unknown", "error": str(e)}

@@ -27,8 +27,12 @@ pygame==2.5.2
 # VICTOR v5 Phase 3: Vision & Multimodal VLM Architecture
 mss==9.0.1
 Pillow==10.2.0
+<<<<<<< HEAD
 pygetwindow==0.0.9
 
 # VICTOR V5 Phase 4: Desktop Interaction & System Awareness
 pyautogui==0.9.54
 psutil==5.9.8
+=======
+pygetwindow==0.0.9
+>>>>>>> a5c6d41162d9df63cc192c0d215e1f8b69d1d330

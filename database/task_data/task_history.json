@@ -268,6 +268,7 @@
         "status": "completed",
         "timestamp": "2026-05-30T20:32:58.834137",
         "result": "Successfully extracted markdown page layer. File saved to: D:\\VICTOR\\workspace\\extracted_web_content\\page_summary.md"
+<<<<<<< HEAD
     },
     {
         "id": "40d2f6fa-3e98-4e4c-bdda-2fee0b2ce7a4",
@@ -439,5 +440,7 @@
         "status": "completed",
         "timestamp": "2026-05-30T23:02:47.769729",
         "result": "Created file: hello.txt"
+=======
+>>>>>>> a5c6d41162d9df63cc192c0d215e1f8b69d1d330
     }
 ]

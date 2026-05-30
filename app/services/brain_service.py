@@ -6,6 +6,7 @@ from app.services.realtime_service import RealtimeService
 from app.services.groq_service import GroqService
 from app.services.intent_service import IntentService
 from app.services.assistant_service import AssistantService
+from app.services.vision_service import VisionService
 from app.utils.time_info import get_formatted_time
 
 class BrainService:
@@ -17,6 +18,7 @@ class BrainService:
         
         self.intent_service = IntentService(self.groq_service)
         self.assistant_service = AssistantService()
+        self.vision_service = VisionService()
 
     async def _optimize_query(self, session_id: str, user_message: str) -> str:
         history = self.chat_service.get_history(session_id)
@@ -40,10 +42,6 @@ class BrainService:
             return user_message 
 
     async def generate_system_report(self, system_event_description: str) -> str:
-        """
-        Dynamically crafts a single, unique, context-aware response confirming a state change.
-        Ensures the phrase is written to sound natural when processed by the TTS engine.
-        """
         current_time = get_formatted_time()
         prompt = (
             f"You are VICTOR, behaving exactly like J.A.R.V.I.S. from Iron Man.\n"
@@ -59,7 +57,6 @@ class BrainService:
         
         try:
             compiled_phrase = ""
-            # Stream the token array cleanly into a single non-static notification sentence
             async for token in self.groq_service.stream_chat([{"role": "user", "content": prompt}]):
                 if token:
                     compiled_phrase += token
@@ -89,6 +86,14 @@ class BrainService:
             else:
                 search_context = f"\n--- BEGIN LIVE INTERNET DATA ---\n{search_data}\n--- END LIVE INTERNET DATA ---\n"
         
+        vision_context = ""
+        vision_keywords = ["screen", "look at", "what is on", "analyze this", "see this", "visual", "vision", "failing", "vs code", "error", "look at my screen"]
+        
+        if any(kw in user_message.lower() for kw in vision_keywords):
+            print(f"\n[ROUTER] Vision Mode: ON")
+            vision_report = await self.vision_service.analyze_current_screen(user_message)
+            vision_context = f"\n--- LIVE SCREEN CAPTURE DATA ---\n{vision_report}\n--- END SCREEN DATA ---\n"
+            
         current_time = get_formatted_time()
         voice_rules = ""
         if is_voice:
@@ -104,6 +109,7 @@ class BrainService:
             f"Never break character. Never act like a standard generic AI.\n\n"
             f"INTERNAL MEMORY CONTEXT:\n{memory_context}\n"
             f"{search_context}\n"
+            f"{vision_context}\n"
             f"STRICT OUTPUT RULES:\n"
             f"1. NO THOUGHTS\n2. NO LABELS\n3. ANTI-HALLUCINATION\n"
             f"{voice_rules}"

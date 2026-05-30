@@ -18,8 +18,13 @@ playwright==1.42.0
 beautifulsoup4==4.12.3
 requests==2.31.0
 
-# VICTOR v5: Voice Input & Output System
+# VICTOR v5 Phase 2: Voice Input & Output System
 SpeechRecognition==3.10.1
 pyaudio==0.2.14
 edge-tts>=7.2.7
 pygame==2.5.2
+
+# VICTOR v5 Phase 3: Vision & Multimodal VLM Architecture
+mss==9.0.1
+Pillow==10.2.0
+pygetwindow==0.0.9

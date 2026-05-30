@@ -62,12 +62,8 @@ class AssistantService:
             f"1. Acknowledge the completed action with JARVIS-like flair (e.g., 'I have taken the liberty of...', 'Right away, sir.').\n"
             f"2. IF the execution result contains 'EXTRACTED PAGE CONTENT FOR SUMMARY', you MUST provide a detailed, highly readable bulleted summary of the key findings.\n"
             f"3. IF visual debugging data is present, analyze the screen tracebacks and propose a practical fix.\n"
-<<<<<<< HEAD
             f"4. IF the execution result contains 'SYSTEM RESOURCE STATUS' or 'ENVIRONMENT AWARENESS', provide a professional summary of the telemetry.\n"
             f"5. Do NOT simply dump raw file paths or dictionary logs. Describe what was accomplished elegantly.\n"
-=======
-            f"4. Do NOT simply dump raw file paths or dictionary logs. Describe what was accomplished elegantly.\n"
->>>>>>> a5c6d41162d9df63cc192c0d215e1f8b69d1d330
             f"{voice_rules}"
         )
 

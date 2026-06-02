@@ -1,0 +1,2 @@
+Owner: Shashank
+Focus: Developer focused on building scalable architectures, clean code, advanced agentic systems, and AI integrations.

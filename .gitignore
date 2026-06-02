@@ -1,0 +1,16 @@
+# Sensitive files
+.env
+*.env
+# Python cache
+__pycache__/
+*.pyc
+# Environment folders
+venv/
+.venv/
+# IDE files
+.vscode/
+.idea/
+# Databases & Logs
+database/chats_data/
+database/vector_store/
+workspace/execution_logs/

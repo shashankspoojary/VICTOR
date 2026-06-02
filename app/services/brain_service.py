@@ -105,9 +105,9 @@ class BrainService:
         user_lower = user_message.lower()
         
         # Fast-track rule-based regex checks
-        if re.search(r'\\b(open|start|turn on) (webcam|camera)\\b', user_lower):
+        if re.search(r'\b(open|start|turn on) (webcam|camera)\b', user_lower):
             return [("open_webcam", "")]
-        if re.search(r'\\b(close|stop|turn off) (webcam|camera)\\b', user_lower):
+        if re.search(r'\b(close|stop|turn off) (webcam|camera)\b', user_lower):
             return [("close_webcam", "")]
             
         messages = [

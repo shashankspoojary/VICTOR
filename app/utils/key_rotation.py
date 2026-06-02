@@ -1,25 +1,33 @@
-import os
-import itertools
+import threading
+import logging
 from typing import List
 
-class KeyRotation:
-    def __init__(self):
-        self.keys = self._load_keys()
-        self.key_cycle = itertools.cycle(self.keys) if self.keys else None
+import config
 
-    def _load_keys(self) -> List[str]:
-        keys = []
-        index = 1
-        while True:
-            key = os.getenv(f"GROQ_API_KEY{index}")
-            if key:
-                keys.append(key)
-                index += 1
-            else:
-                break
-        return keys
+logger = logging.getLogger(__name__)
 
-    def get_next_key(self) -> str:
-        if not self.key_cycle:
-            raise ValueError("No GROQ_API_KEY found in environment variables.")
-        return next(self.key_cycle)
+class KeyRotator:
+    def __init__(self, keys: List[str], label: str):
+        self.keys = keys
+        self.label = label
+        self.index = 0
+        self.lock = threading.Lock()
+
+    def get_key(self) -> str:
+        with self.lock:
+            if not self.keys:
+                return ""
+            return self.keys[self.index]
+
+    def rotate(self) -> None:
+        with self.lock:
+            if not self.keys:
+                return
+            old_index = self.index
+            self.index = (self.index + 1) % len(self.keys)
+            logger.info(f"[{self.label}] Rotated key from index {old_index} to {self.index}.")
+
+# Instantiate and expose three global singleton engine instances
+groq_rotator = KeyRotator(config.GROQ_API_KEYS, "Groq-LLM")
+vlm_rotator = KeyRotator(config.GROQ_VLM_API_KEYS, "Groq-VLM")
+tavily_rotator = KeyRotator(config.TAVILY_API_KEYS, "Tavily-Search")

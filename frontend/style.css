@@ -1592,19 +1592,27 @@ textarea { font-family: var(--font); color: var(--text); }
 .activity-panel, .search-results-widget {
     transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.5s ease;
 }
-body.voice-only-active .header,
 body.voice-only-active .chat-messages,
 body.voice-only-active .input-bar,
 body.voice-only-active .activity-panel,
-body.voice-only-active .search-results-widget {
+body.voice-only-active .search-results-widget,
+body.voice-only-active .header-left,
+body.voice-only-active .header-center {
     opacity: 0;
     pointer-events: none;
 }
 body.voice-only-active #orb-container {
-    width: 80vmin;
-    height: 80vmin;
+    width: 85vmin;
+    height: 85vmin;
     max-width: none;
     max-height: none;
     opacity: 1;
     pointer-events: auto;
+    transform: translate(-50%, -50%) perspective(1000px);
+}
+body.voice-only-active #voice-mode-toggle {
+    background: rgba(78, 205, 196, 0.2);
+    border-color: var(--accent-secondary);
+    color: var(--accent-secondary);
+    box-shadow: 0 0 12px rgba(78, 205, 196, 0.2);
 }

@@ -22,6 +22,7 @@ class OrbRenderer {
 
         // New: Color cycling
         this.colorCycle = 0;
+        this.colorCycleSpeed = 0.1;
 
         this.canvas = document.createElement('canvas');
         this.canvas.style.width = '100%';
@@ -378,7 +379,7 @@ class OrbRenderer {
         this.currentBreath += (this.targetBreath - this.currentBreath) * Math.min(dt * 2.0, 1);
 
         // Color cycling
-        this.colorCycle += dt * 0.1;
+        this.colorCycle += dt * this.colorCycleSpeed;
 
         gl.clear(gl.COLOR_BUFFER_BIT);
         gl.useProgram(this.pgm);

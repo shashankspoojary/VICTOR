@@ -70,28 +70,21 @@ const toggleVoiceInterrupt = $('toggle-voice-interrupt');
 const toastContainer     = $('toast-container');
 const voiceModeToggle    = $('voice-mode-toggle');
 
-let orbSpeakingInterval = null;
-let orbThinkingInterval = null;
-
 function setOrbState(state) {
     if (!orb) return;
-    clearInterval(orbSpeakingInterval);
-    clearInterval(orbThinkingInterval);
     
     if (state === 'idle') {
         orb.targetHover = 0.0;
         orb.hoverIntensity = 0.2;
         orb.hue = 0;
+        orb.colorCycleSpeed = 0.1;
     } else if (state === 'thinking') {
-        orb.targetHover = 0.5;
-        orbThinkingInterval = setInterval(() => {
-            orb.colorCycle += 0.05;
-        }, 50);
+        orb.targetHover = 0.6;
+        orb.colorCycleSpeed = 1.0;
     } else if (state === 'speaking') {
         orb.targetHover = 1.0;
-        orbSpeakingInterval = setInterval(() => {
-            orb.hoverIntensity = 0.4 + Math.random() * 0.5;
-        }, 80);
+        orb.hoverIntensity = 0.7;
+        orb.colorCycleSpeed = 0.1;
     }
 }
 

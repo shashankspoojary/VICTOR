@@ -9,6 +9,7 @@ import base64
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 # Setup sys.path to ensure modules can be imported
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -149,6 +150,10 @@ async def event_stream(req: ChatRequest):
 @app.post("/chat/victor/stream")
 async def chat_stream(req: ChatRequest):
     return StreamingResponse(event_stream(req), media_type="text/event-stream")
+
+
+# Mount the frontend directory to serve UI files
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 
 if __name__ == "__main__":

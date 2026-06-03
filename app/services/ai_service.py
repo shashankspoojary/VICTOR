@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 from typing import Generator, List, Dict, Any, Optional, Union
+import edge_tts
 
 # Allow direct script execution for testing
 if __name__ == "__main__":
@@ -15,6 +16,12 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 class AIService:
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+
+    async def generate_speech_stream(self, text: str, voice: str, rate: str):
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                yield chunk["data"]
 
     def stream_completion(self, prompt: str, system_prompt: str, chat_history: list = None) -> Generator[str, None, None]:
         max_retries = max(1, len(groq_rotator.keys))

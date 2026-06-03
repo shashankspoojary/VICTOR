@@ -4,6 +4,7 @@ import logging
 import uuid
 import sys
 import os
+import base64
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import services
+import config
 from app.services.brain_service import BrainService
 from app.services.ai_service import AIService
 from app.services.memory_service import MemoryService
@@ -69,7 +71,7 @@ async def event_stream(req: ChatRequest):
     route = classification.get("route", "general")
     
     # Yield the chosen route
-    yield f'data: {json.dumps({"activity": {"event": "decision", "route": route}})}\n\n'
+    yield f'data: {json.dumps({"activity": {"event": "decision", "query_type": route, "reasoning": "Routing execution through master brain.", "elapsed_ms": 150}})}\n\n'
     
     context_grounding = ""
     
@@ -85,7 +87,16 @@ async def event_stream(req: ChatRequest):
             yield f'data: {json.dumps({"actions": action_dict})}\n\n'
             
     elif route == "realtime":
-        context_grounding = realtime_service.get_search_context(req.message)
+        search_data = realtime_service.search_web(req.message)
+        yield f'data: {json.dumps({"search_results": {"query": req.message, "answer": "Synthesizing web data metrics...", "results": search_data.get("results", [])}})}\n\n'
+        
+        context_parts = []
+        for item in search_data.get("results", []):
+            title = item.get('title', 'Unknown Title')
+            url = item.get('url', 'Unknown URL')
+            content = item.get('content', '')
+            context_parts.append(f"Title: {title}\nURL: {url}\nContent: {content}\n")
+        context_grounding = "\n".join(context_parts)
         
     elif route == "general":
         context_grounding = memory_service.get_relevant_context(req.message)
@@ -96,10 +107,40 @@ async def event_stream(req: ChatRequest):
     # Yield streaming started
     yield f'data: {json.dumps({"activity": {"event": "streaming_started"}})}\n\n'
     
+    sentence_buffer = ""
     # Loop over chunks returned by 'AIService.stream_completion()'
-    for chunk in ai_service.stream_completion(req.message, system_prompt):
-        yield f'data: {json.dumps({"chunk": chunk})}\n\n'
+    for token in ai_service.stream_completion(req.message, system_prompt):
+        sentence_buffer += token
         
+        if any(punct in token for punct in ['.', '?', '!', '\n']):
+            sentence_to_speak = sentence_buffer.strip()
+            if req.tts and sentence_to_speak:
+                audio_bytes = b""
+                async for audio_chunk in ai_service.generate_speech_stream(sentence_to_speak, config.TTS_VOICE, config.TTS_RATE):
+                    audio_bytes += audio_chunk
+                
+                if audio_bytes:
+                    base64_audio_string = base64.b64encode(audio_bytes).decode('utf-8')
+                    yield f'data: {json.dumps({"chunk": token, "audio": base64_audio_string})}\n\n'
+                else:
+                    yield f'data: {json.dumps({"chunk": token})}\n\n'
+            else:
+                yield f'data: {json.dumps({"chunk": token})}\n\n'
+            
+            sentence_buffer = ""
+        else:
+            yield f'data: {json.dumps({"chunk": token})}\n\n'
+            
+    if sentence_buffer:
+        sentence_to_speak = sentence_buffer.strip()
+        if req.tts and sentence_to_speak:
+            audio_bytes = b""
+            async for audio_chunk in ai_service.generate_speech_stream(sentence_to_speak, config.TTS_VOICE, config.TTS_RATE):
+                audio_bytes += audio_chunk
+            if audio_bytes:
+                base64_audio_string = base64.b64encode(audio_bytes).decode('utf-8')
+                yield f'data: {json.dumps({"chunk": "", "audio": base64_audio_string})}\n\n'
+                
     # Finally, yield done
     yield f'data: {json.dumps({"done": True})}\n\n'
 

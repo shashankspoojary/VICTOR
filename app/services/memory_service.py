@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
@@ -13,6 +14,17 @@ from langchain_core.documents import Document
 logger = logging.getLogger(__name__)
 
 class MemoryService:
+    _embeddings_cache = None
+    _embeddings_lock = threading.Lock()
+
+    @classmethod
+    def _get_embeddings(cls):
+        if cls._embeddings_cache is None:
+            with cls._embeddings_lock:
+                if cls._embeddings_cache is None:
+                    cls._embeddings_cache = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        return cls._embeddings_cache
+
     def __init__(self, base_dir: str = "D:/VICTOR"):
         self.base_dir = Path(base_dir)
         self.learning_data_dir = self.base_dir / "database" / "learning_data"
@@ -25,8 +37,7 @@ class MemoryService:
         for d in [self.learning_data_dir, self.knowledge_lib_dir, self.vector_store_dir, self.memory_dir, self.chats_data_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-        # Initialize embeddings
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        # Initialize embeddings lazily
         self.vector_store = None
 
     def _get_all_documents(self) -> List[Document]:
@@ -53,7 +64,7 @@ class MemoryService:
             print("Loading existing FAISS index...")
             self.vector_store = FAISS.load_local(
                 folder_path=str(self.vector_store_dir), 
-                embeddings=self.embeddings,
+                embeddings=self._get_embeddings(),
                 allow_dangerous_deserialization=True
             )
         else:
@@ -62,14 +73,14 @@ class MemoryService:
             if not docs:
                 print("No documents found to index.")
                 # Create an empty vector store if no docs
-                self.vector_store = FAISS.from_texts(["Initial empty document."], self.embeddings)
+                self.vector_store = FAISS.from_texts(["Initial empty document."], self._get_embeddings())
             else:
                 text_splitter = RecursiveCharacterTextSplitter(
                     chunk_size=500,
                     chunk_overlap=50
                 )
                 chunks = text_splitter.split_documents(docs)
-                self.vector_store = FAISS.from_documents(chunks, self.embeddings)
+                self.vector_store = FAISS.from_documents(chunks, self._get_embeddings())
             
             self.vector_store.save_local(str(self.vector_store_dir))
             print(f"FAISS index saved to {self.vector_store_dir}")

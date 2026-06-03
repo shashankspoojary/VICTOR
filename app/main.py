@@ -63,6 +63,48 @@ async def get_task(task_id: str):
     return {"status": "completed"}
 
 
+def filter_think_tags(stream):
+    buffer = ""
+    in_think_block = False
+    
+    for token in stream:
+        buffer += token
+        while buffer:
+            if not in_think_block:
+                start_idx = buffer.find("<think>")
+                if start_idx != -1:
+                    if start_idx > 0:
+                        yield buffer[:start_idx]
+                    buffer = buffer[start_idx + len("<think>"):]
+                    in_think_block = True
+                else:
+                    prefix_idx = buffer.rfind("<")
+                    if prefix_idx != -1 and "<think>".startswith(buffer[prefix_idx:]):
+                        if prefix_idx > 0:
+                            yield buffer[:prefix_idx]
+                        buffer = buffer[prefix_idx:]
+                        break
+                    else:
+                        if buffer:
+                            yield buffer
+                        buffer = ""
+            else:
+                end_idx = buffer.find("</think>")
+                if end_idx != -1:
+                    buffer = buffer[end_idx + len("</think>"):]
+                    in_think_block = False
+                else:
+                    prefix_idx = buffer.rfind("<")
+                    if prefix_idx != -1 and "</think>".startswith(buffer[prefix_idx:]):
+                        buffer = buffer[prefix_idx:]
+                        break
+                    else:
+                        buffer = ""
+                        break
+                        
+    if buffer and not in_think_block:
+        yield buffer
+
 async def event_stream(req: ChatRequest):
     # Yield initial activity event mapping to frontend SSE specs
     yield f'data: {json.dumps({"activity": {"event": "query_detected", "message": "Thinking..."}})}\n\n'
@@ -74,6 +116,13 @@ async def event_stream(req: ChatRequest):
     # Yield the chosen route
     yield f'data: {json.dumps({"activity": {"event": "decision", "query_type": route, "reasoning": "Routing execution through master brain.", "elapsed_ms": 150}})}\n\n'
     
+    if route == "camera":
+        yield f'data: {json.dumps({"orb_control": {"hue": 30, "hoverIntensity": 0.8, "breathSpeed": 2.5}})}\n\n'
+    elif route == "realtime":
+        yield f'data: {json.dumps({"orb_control": {"hue": 190, "hoverIntensity": 0.6, "breathSpeed": 2.0}})}\n\n'
+    elif route == "general":
+        yield f'data: {json.dumps({"orb_control": {"hue": 260, "hoverIntensity": 0.3, "breathSpeed": 1.2}})}\n\n'
+        
     context_grounding = ""
     
     # Route execution block
@@ -110,7 +159,7 @@ async def event_stream(req: ChatRequest):
     
     sentence_buffer = ""
     # Loop over chunks returned by 'AIService.stream_completion()'
-    for token in ai_service.stream_completion(req.message, system_prompt):
+    for token in filter_think_tags(ai_service.stream_completion(req.message, system_prompt)):
         sentence_buffer += token
         
         if any(punct in token for punct in ['.', '?', '!', '\n']):

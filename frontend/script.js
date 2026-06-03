@@ -699,12 +699,12 @@ function updateTaskCard(cardEl, status, data) {
         viewBtn.textContent = 'Open in new tab';
         viewBtn.addEventListener('click', () => {
             const taskId = cardEl.dataset.taskId;
-            window.open(`${window.location.origin}/app/viewer.html?task_id=${taskId}`, '_blank');
+            window.open(`${window.location.origin}/viewer.html?task_id=${taskId}`, '_blank');
         });
         cardEl.appendChild(viewBtn);
         try {
             const taskId = cardEl.dataset.taskId;
-            const w = window.open(`${window.location.origin}/app/viewer.html?task_id=${taskId}`, '_blank');
+            const w = window.open(`${window.location.origin}/viewer.html?task_id=${taskId}`, '_blank');
             if (!w) {
                 showToast('Result ready! Click "Open in new tab" to view.');
             }
@@ -838,8 +838,14 @@ async function sendMessageWithImage(text, imgBase64) {
                     }
                     if (data.actions) handleActions(data.actions, contentEl);
                     if (data.background_tasks) handleBackgroundTasks(data.background_tasks, contentEl);
+                    if (data.orb_control && orb) {
+                        if (data.orb_control.hue !== undefined) orb.hue = data.orb_control.hue;
+                        if (data.orb_control.hoverIntensity !== undefined) orb.hoverIntensity = data.orb_control.hoverIntensity;
+                        if (data.orb_control.breathPhase !== undefined) orb.breathPhase = data.orb_control.breathPhase;
+                    }
                     if ('chunk' in data) {
                         const chunkText = data.chunk || '';
+                        if (orb && chunkText.trim().length > 0) orb.hoverIntensity = 0.5 + Math.random() * 0.3; // subtle variations
                         fullResponse += chunkText;
                         const textSpan = contentEl.querySelector('.msg-stream-text');
                         if (textSpan) {
@@ -1433,8 +1439,14 @@ async function sendMessage(textOverride) {
                     if (data.background_tasks) {
                         handleBackgroundTasks(data.background_tasks, contentEl);
                     }
+                    if (data.orb_control && orb) {
+                        if (data.orb_control.hue !== undefined) orb.hue = data.orb_control.hue;
+                        if (data.orb_control.hoverIntensity !== undefined) orb.hoverIntensity = data.orb_control.hoverIntensity;
+                        if (data.orb_control.breathPhase !== undefined) orb.breathPhase = data.orb_control.breathPhase;
+                    }
                     if ('chunk' in data) {
                         const chunkText = data.chunk || '';
+                        if (orb && chunkText.trim().length > 0) orb.hoverIntensity = 0.5 + Math.random() * 0.3; // subtle variations
                         if (chunkText && !firstChunkReceived) {
                             firstChunkReceived = true;
                             if (ttsPlayer) ttsPlayer.reset();

@@ -5,6 +5,7 @@ import uuid
 import sys
 import os
 import base64
+import re
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,11 +56,11 @@ personality_service = PersonalityService()
 
 @app.on_event("startup")
 async def startup_event():
-    # Trigger a non-blocking background execution thread to pre-warm the embeddings cache
-    logging.info("[STARTUP] Launching non-blocking background model pre-warming task...")
+    # Trigger a non-blocking background execution thread to pre-warm the embeddings cache and index
+    logging.info("[STARTUP] Launching non-blocking background model and index pre-warming task...")
     loop = asyncio.get_running_loop()
-    # Call your memory service embeddings loader class method asynchronously
-    loop.run_in_executor(None, memory_service._get_embeddings)
+    # Call your memory service index loader method asynchronously
+    loop.run_in_executor(None, memory_service.preload_index)
 
 
 @app.get("/health")
@@ -174,14 +175,24 @@ async def event_stream(req: ChatRequest):
         if any(punct in token for punct in ['.', '?', '!', '\n']):
             sentence_to_speak = sentence_buffer.strip()
             if req.tts and sentence_to_speak:
-                audio_bytes = b""
-                async for audio_chunk in ai_service.generate_speech_stream(sentence_to_speak, config.TTS_VOICE, config.TTS_RATE):
-                    audio_bytes += audio_chunk
-                
-                if audio_bytes:
-                    base64_audio_string = base64.b64encode(audio_bytes).decode('utf-8')
-                    yield f'data: {json.dumps({"chunk": token, "audio": base64_audio_string})}\n\n'
+                # Verify the sentence contains actual readable characters (letters or digits)
+                if sentence_to_speak.strip() and re.search(r'[a-zA-Z0-9]', sentence_to_speak):
+                    # Wrap the speech chunk block in a clean try/except boundary
+                    try:
+                        audio_bytes = b""
+                        async for audio_chunk in ai_service.generate_speech_stream(sentence_to_speak, config.TTS_VOICE, config.TTS_RATE):
+                            audio_bytes += audio_chunk
+                        
+                        if audio_bytes:
+                            base64_audio_string = base64.b64encode(audio_bytes).decode('utf-8')
+                            yield f'data: {json.dumps({"chunk": token, "audio": base64_audio_string})}\n\n'
+                        else:
+                            yield f'data: {json.dumps({"chunk": token})}\n\n'
+                    except Exception as tts_err:
+                        logging.warning(f"[TTS GUARD] Suppressed audio frame fault: {tts_err}")
+                        yield f'data: {json.dumps({"chunk": token})}\n\n'
                 else:
+                    # Fallback to streaming purely text tokens if the string contains only formatting data
                     yield f'data: {json.dumps({"chunk": token})}\n\n'
             else:
                 yield f'data: {json.dumps({"chunk": token})}\n\n'
@@ -193,12 +204,17 @@ async def event_stream(req: ChatRequest):
     if sentence_buffer:
         sentence_to_speak = sentence_buffer.strip()
         if req.tts and sentence_to_speak:
-            audio_bytes = b""
-            async for audio_chunk in ai_service.generate_speech_stream(sentence_to_speak, config.TTS_VOICE, config.TTS_RATE):
-                audio_bytes += audio_chunk
-            if audio_bytes:
-                base64_audio_string = base64.b64encode(audio_bytes).decode('utf-8')
-                yield f'data: {json.dumps({"chunk": "", "audio": base64_audio_string})}\n\n'
+            # Verify the sentence contains actual readable characters (letters or digits)
+            if sentence_to_speak.strip() and re.search(r'[a-zA-Z0-9]', sentence_to_speak):
+                try:
+                    audio_bytes = b""
+                    async for audio_chunk in ai_service.generate_speech_stream(sentence_to_speak, config.TTS_VOICE, config.TTS_RATE):
+                        audio_bytes += audio_chunk
+                    if audio_bytes:
+                        base64_audio_string = base64.b64encode(audio_bytes).decode('utf-8')
+                        yield f'data: {json.dumps({"chunk": "", "audio": base64_audio_string})}\n\n'
+                except Exception as tts_err:
+                    logging.warning(f"[TTS GUARD] Suppressed audio frame fault: {tts_err}")
                 
     # Finally, yield done
     yield f'data: {json.dumps({"done": True})}\n\n'

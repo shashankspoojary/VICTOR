@@ -40,6 +40,22 @@ class MemoryService:
         # Initialize embeddings lazily
         self.vector_store = None
 
+    def preload_index(self):
+        index_path = self.vector_store_dir / "index.faiss"
+        if index_path.exists():
+            try:
+                self.vector_store = FAISS.load_local(
+                    folder_path=str(self.vector_store_dir), 
+                    embeddings=self._get_embeddings(),
+                    allow_dangerous_deserialization=True
+                )
+                logger.info(f"Successfully pre-loaded FAISS index from {self.vector_store_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to pre-load FAISS index on startup: {e}")
+        else:
+            logger.warning(f"FAISS index missing at {self.vector_store_dir}, skipping startup pre-load. Model is pre-warmed.")
+            self._get_embeddings() # Ensure embeddings are pre-warmed
+
     def _get_all_documents(self) -> List[Document]:
         documents = []
         # Parse learning_data and knowledge_library

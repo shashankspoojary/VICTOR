@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VICTOR — Viewer</title>
+    <title>J.A.R.V.I.S — Viewer</title>
     <style>
         :root {
             --bg: #0a0a1a;
@@ -291,7 +291,7 @@
 </head>
 <body>
     <div class="topbar">
-        <span class="topbar-title">VICTOR</span>
+        <span class="topbar-title">J.A.R.V.I.S</span>
         <div class="topbar-actions" id="topbar-actions"></div>
     </div>
 
@@ -314,7 +314,7 @@
         const toastEl = document.getElementById('toast');
         const promptEl = document.getElementById('loading-prompt');
         if (!taskId) {
-            showError('No task ID provided. Please open this page from VICTOR.');
+            showError('No task ID provided. Please open this page from JARVIS.');
             return;
         }
         let pollInterval = null;
@@ -373,7 +373,7 @@
             }
         }
         function renderImage(result) {
-            document.title = 'VICTOR — Generated Image';
+            document.title = 'J.A.R.V.I.S — Generated Image';
             const badge = document.createElement('span');
             badge.className = 'badge badge-image';
             badge.textContent = 'Generated Image';
@@ -404,7 +404,7 @@
             actionsEl.appendChild(copyUrlBtn);
         }
         function renderContent(result) {
-            document.title = 'VICTOR — Generated Content';
+            document.title = 'J.A.R.V.I.S — Generated Content';
             const container = document.createElement('div');
             container.className = 'content-container';
             const header = document.createElement('div');

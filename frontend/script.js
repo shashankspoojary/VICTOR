@@ -68,25 +68,6 @@ const toggleAutoSearch    = $('toggle-auto-search');
 const toggleThinkingSounds = $('toggle-thinking-sounds');
 const toggleVoiceInterrupt = $('toggle-voice-interrupt');
 const toastContainer     = $('toast-container');
-const voiceModeToggle    = $('voice-mode-toggle');
-
-function setOrbState(state) {
-    if (!orb) return;
-    
-    if (state === 'idle') {
-        orb.targetHover = 0.0;
-        orb.hoverIntensity = 0.2;
-        orb.hue = 0;
-        orb.colorCycleSpeed = 0.1;
-    } else if (state === 'thinking') {
-        orb.targetHover = 0.6;
-        orb.colorCycleSpeed = 1.0;
-    } else if (state === 'speaking') {
-        orb.targetHover = 1.0;
-        orb.hoverIntensity = 0.7;
-        orb.colorCycleSpeed = 0.1;
-    }
-}
 
 class PreStarterPlayer {
     constructor() {
@@ -164,7 +145,7 @@ class TTSPlayer {
         this.playing = false;
         if (ttsBtn) ttsBtn.classList.remove('tts-speaking');
         if (orbContainer) orbContainer.classList.remove('speaking');
-        if (orb) setOrbState(isStreaming ? 'thinking' : 'idle');
+        if (orb) orb.setActive(false);
         if (typeof this.onPlaybackComplete === 'function') this.onPlaybackComplete();
     }
     reset() {
@@ -179,7 +160,7 @@ class TTSPlayer {
         const myId = this._loopId;
         if (ttsBtn) ttsBtn.classList.add('tts-speaking');
         if (orbContainer) orbContainer.classList.add('speaking');
-        if (orb) setOrbState('speaking');
+        if (orb) orb.setActive(true);
         while (this.queue.length > 0) {
             if (this.stopped || myId !== this._loopId) break;
             const b64 = this.queue.shift();
@@ -196,7 +177,7 @@ class TTSPlayer {
         this.playing = false;
         if (ttsBtn) ttsBtn.classList.remove('tts-speaking');
         if (orbContainer) orbContainer.classList.remove('speaking');
-        if (orb) setOrbState(isStreaming ? 'thinking' : 'idle');
+        if (orb) orb.setActive(false);
         if (typeof this.onPlaybackComplete === 'function') this.onPlaybackComplete();
     }
     _playB64(b64) {
@@ -284,23 +265,9 @@ function initOrb() {
     try {
         orb = new OrbRenderer(orbContainer, {
             hue: 0,
-            hoverIntensity: 0.2,
+            hoverIntensity: 0.3,
             backgroundColor: [0.02, 0.02, 0.06]
         });
-        
-        if (orbContainer) {
-            orbContainer.addEventListener('mousemove', (e) => {
-                if (!document.body.classList.contains('voice-only-active')) return;
-                const rect = orbContainer.getBoundingClientRect();
-                const x = (e.clientX - rect.left - rect.width/2) / rect.width;
-                const y = (e.clientY - rect.top - rect.height/2) / rect.height;
-                orbContainer.style.transform = `translate(-50%, -50%) perspective(1000px) rotateY(${x * 10}deg) rotateX(${-y * 10}deg) scale(1.05)`;
-            });
-            orbContainer.addEventListener('mouseleave', () => {
-                if (!document.body.classList.contains('voice-only-active')) return;
-                orbContainer.style.transform = `translate(-50%, -50%) perspective(1000px) rotateY(0deg) rotateX(0deg) scale(1)`;
-            });
-        }
     } catch (e) { console.warn('Orb init failed:', e); }
 }
 
@@ -699,12 +666,12 @@ function updateTaskCard(cardEl, status, data) {
         viewBtn.textContent = 'Open in new tab';
         viewBtn.addEventListener('click', () => {
             const taskId = cardEl.dataset.taskId;
-            window.open(`${window.location.origin}/viewer.html?task_id=${taskId}`, '_blank');
+            window.open(`${window.location.origin}/app/viewer.html?task_id=${taskId}`, '_blank');
         });
         cardEl.appendChild(viewBtn);
         try {
             const taskId = cardEl.dataset.taskId;
-            const w = window.open(`${window.location.origin}/viewer.html?task_id=${taskId}`, '_blank');
+            const w = window.open(`${window.location.origin}/app/viewer.html?task_id=${taskId}`, '_blank');
             if (!w) {
                 showToast('Result ready! Click "Open in new tab" to view.');
             }
@@ -791,7 +758,6 @@ async function sendMessageWithImage(text, imgBase64) {
     if (sendBtn) sendBtn.disabled = true;
     if (messageInput) messageInput.disabled = true;
     if (orbContainer) orbContainer.classList.add('active');
-    if (orb) setOrbState('thinking');
     if (ttsPlayer) { ttsPlayer.reset(); ttsPlayer.unlock(); }
     let timeoutId = null;
     const controller = new AbortController();
@@ -838,14 +804,8 @@ async function sendMessageWithImage(text, imgBase64) {
                     }
                     if (data.actions) handleActions(data.actions, contentEl);
                     if (data.background_tasks) handleBackgroundTasks(data.background_tasks, contentEl);
-                    if (data.orb_control && orb) {
-                        if (data.orb_control.hue !== undefined) orb.hue = data.orb_control.hue;
-                        if (data.orb_control.hoverIntensity !== undefined) orb.hoverIntensity = data.orb_control.hoverIntensity;
-                        if (data.orb_control.breathPhase !== undefined) orb.breathPhase = data.orb_control.breathPhase;
-                    }
                     if ('chunk' in data) {
                         const chunkText = data.chunk || '';
-                        if (orb && chunkText.trim().length > 0) orb.hoverIntensity = 0.5 + Math.random() * 0.3; // subtle variations
                         fullResponse += chunkText;
                         const textSpan = contentEl.querySelector('.msg-stream-text');
                         if (textSpan) {
@@ -882,7 +842,6 @@ async function sendMessageWithImage(text, imgBase64) {
         if (sendBtn) sendBtn.disabled = false;
         if (messageInput) messageInput.disabled = false;
         if (orbContainer) orbContainer.classList.remove('active');
-        if (orb && (!ttsPlayer || !ttsPlayer.playing)) setOrbState('idle');
     }
 }
 
@@ -919,11 +878,6 @@ function showToast(msg, durationMs = 5000) {
 }
 
 function bindEvents() {
-    if (voiceModeToggle) {
-        voiceModeToggle.addEventListener('click', () => {
-            document.body.classList.toggle('voice-only-active');
-        });
-    }
     if (sendBtn) sendBtn.addEventListener('click', () => { if (!isStreaming) sendMessage(); });
     if (messageInput) messageInput.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!isStreaming) sendMessage(); }
@@ -1365,7 +1319,6 @@ async function sendMessage(textOverride) {
     if (sendBtn) sendBtn.disabled = true;
     if (messageInput) messageInput.disabled = true;
     if (orbContainer) orbContainer.classList.add('active');
-    if (orb) setOrbState('thinking');
     if (ttsPlayer) { ttsPlayer.reset(); ttsPlayer.unlock(); }
     const messageToSend = imgBase64 ? (text + ' ' + CAM_BYPASS_TOKEN) : text;
     const endpoint = '/chat/jarvis/stream';
@@ -1439,14 +1392,8 @@ async function sendMessage(textOverride) {
                     if (data.background_tasks) {
                         handleBackgroundTasks(data.background_tasks, contentEl);
                     }
-                    if (data.orb_control && orb) {
-                        if (data.orb_control.hue !== undefined) orb.hue = data.orb_control.hue;
-                        if (data.orb_control.hoverIntensity !== undefined) orb.hoverIntensity = data.orb_control.hoverIntensity;
-                        if (data.orb_control.breathPhase !== undefined) orb.breathPhase = data.orb_control.breathPhase;
-                    }
                     if ('chunk' in data) {
                         const chunkText = data.chunk || '';
-                        if (orb && chunkText.trim().length > 0) orb.hoverIntensity = 0.5 + Math.random() * 0.3; // subtle variations
                         if (chunkText && !firstChunkReceived) {
                             firstChunkReceived = true;
                             if (ttsPlayer) ttsPlayer.reset();
@@ -1501,9 +1448,17 @@ async function sendMessage(textOverride) {
         if (sendBtn) sendBtn.disabled = false;
         if (messageInput) messageInput.disabled = false;
         if (orbContainer) orbContainer.classList.remove('active');
-        if (orb && (!ttsPlayer || !ttsPlayer.playing)) setOrbState('idle');
         maybeRestartListening();
     }
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+    init();
+    const voiceToggle = document.getElementById('voice-mode-toggle');
+    if (voiceToggle) {
+        voiceToggle.addEventListener('click', () => {
+            document.body.classList.toggle('voice-only-active');
+            showToast(document.body.classList.contains('voice-only-active') ? 'Immersive Voice Mode Activated' : 'Chat Mode Restored');
+        });
+    }
+});

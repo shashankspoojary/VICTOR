@@ -1,5 +1,5 @@
 /* ================================================================
-   Enhanced WebGL Orb Renderer — Upgraded Visuals & Animation
+   Enhanced WebGL Orb Renderer — Standalone JavaScript Module
    ================================================================ */
 
 class OrbRenderer {
@@ -8,6 +8,8 @@ class OrbRenderer {
         this.hue = opts.hue ?? 0;
         this.hoverIntensity = opts.hoverIntensity ?? 0.2;
         this.bgColor = opts.backgroundColor ?? [0.02, 0.02, 0.06];
+        this.colorCycleSpeed = opts.colorCycleSpeed ?? 0.1;
+        this.breathSpeed = opts.breathSpeed ?? 1.2;
 
         // Animation state with smoother interpolation
         this.targetHover = 0;
@@ -15,18 +17,18 @@ class OrbRenderer {
         this.currentRot = 0;
         this.lastTs = 0;
 
-        // New: Breathing animation state
+        // Breathing animation state
         this.breathPhase = 0;
         this.targetBreath = 0;
         this.currentBreath = 0;
 
-        // New: Color cycling
+        // Color cycling
         this.colorCycle = 0;
-        this.colorCycleSpeed = 0.1;
 
         this.canvas = document.createElement('canvas');
         this.canvas.style.width = '100%';
         this.canvas.style.height = '100%';
+        this.canvas.style.display = 'block';
         this.container.appendChild(this.canvas);
 
         this.gl = this.canvas.getContext('webgl', { 
@@ -159,10 +161,10 @@ class OrbRenderer {
     const vec3 baseColor1 = vec3(0.65, 0.35, 1.0);      // Richer purple
     const vec3 baseColor2 = vec3(0.25, 0.85, 0.95);   // Brighter cyan
     const vec3 baseColor3 = vec3(0.08, 0.12, 0.7);    // Deep blue-violet
-    const vec3 baseColor4 = vec3(1.0, 0.4, 0.6);      // New: Soft pink accent
+    const vec3 baseColor4 = vec3(1.0, 0.4, 0.6);      // Soft pink accent
 
-    const float innerRadius = 0.55;   // Slightly smaller for more glow
-    const float noiseScale = 0.75;    // Adjusted for finer detail
+    const float innerRadius = 0.55;
+    const float noiseScale = 0.75;
 
     /* ----- Improved lighting with multiple falloff types ----- */
     float light1(float i, float a, float d){
@@ -172,17 +174,16 @@ class OrbRenderer {
         return i / (1.0 + d * d * a);
     }
     float light3(float i, float a, float d){
-        return i * exp(-d * a);  // New: Exponential falloff for sharper highlights
+        return i * exp(-d * a);
     }
 
     /* ----- Enhanced draw function with richer visuals ----- */
     vec4 draw(vec2 uv){
-        // Dynamic hue shift based on time and colorCycle
         float dynamicHue = hue + colorCycle * 30.0;
         vec3 c1 = adjustHue(baseColor1, dynamicHue);
         vec3 c2 = adjustHue(baseColor2, dynamicHue);
         vec3 c3 = adjustHue(baseColor3, dynamicHue);
-        vec3 c4 = adjustHue(baseColor4, dynamicHue + 60.0);  // Offset pink
+        vec3 c4 = adjustHue(baseColor4, dynamicHue + 60.0);
 
         float ang = atan(uv.y, uv.x);
         float len = length(uv);
@@ -190,12 +191,10 @@ class OrbRenderer {
 
         float bgLum = dot(backgroundColor, vec3(0.299, 0.587, 0.114));
 
-        // Enhanced noise with multiple layers
         float timeScale = iTime * 0.4;
         float n0 = fbm3(vec3(uv * noiseScale, timeScale)) * 0.5 + 0.5;
         float n1 = snoise3(vec3(uv * noiseScale * 1.5, timeScale * 1.2)) * 0.5 + 0.5;
 
-        // Breathing effect on radius
         float breathMod = 1.0 + breath * 0.08 * sin(iTime * 1.5);
         float r0 = mix(
             mix(innerRadius, 1.0, 0.35),
@@ -207,55 +206,45 @@ class OrbRenderer {
         float v0 = light1(1.2, 8.0, d0);
         v0 *= smoothstep(r0 * 1.08, r0, len);
 
-        // Enhanced inner fade with noise
         float innerFade = smoothstep(r0 * 0.75, r0 * 0.92, len);
         float innerNoise = snoise3(vec3(ang * 3.0, len * 5.0, iTime * 0.3)) * 0.5 + 0.5;
         v0 *= mix(innerFade, 1.0, bgLum * 0.6 + innerNoise * 0.2);
 
-        // Multiple orbiting lights for richer highlights
         float a2 = iTime * -0.8;
         vec2 pos1 = vec2(cos(a2), sin(a2)) * r0 * 0.85;
         float d1 = distance(uv, pos1);
         float v1 = light2(1.8, 4.0, d1);
         v1 *= light1(1.0, 40.0, d0);
 
-        // Secondary orbiting light
-        float a3 = iTime * 0.6 + 2.094;  // 120 degrees offset
+        float a3 = iTime * 0.6 + 2.094;
         vec2 pos2 = vec2(cos(a3), sin(a3)) * r0 * 0.7;
         float d2 = distance(uv, pos2);
         float v1b = light3(0.8, 6.0, d2);
         v1b *= light1(0.8, 30.0, d0);
 
-        // Combine lights
         v1 += v1b;
 
-        // Enhanced radial masks
         float v2 = smoothstep(1.0, mix(innerRadius, 1.0, n0 * 0.4), len);
         float v3 = smoothstep(innerRadius, mix(innerRadius, 1.0, 0.45), len);
 
-        // Color blending with angular variation and noise
         float cl = cos(ang + iTime * 1.5) * 0.5 + 0.5;
         float cl2 = sin(ang * 2.0 + iTime * 0.7) * 0.5 + 0.5;
         vec3 colBase = mix(c1, c2, cl);
-        colBase = mix(colBase, c4, cl2 * 0.3);  // Subtle pink injection
+        colBase = mix(colBase, c4, cl2 * 0.3);
 
         float fadeAmt = mix(1.0, 0.12, bgLum);
 
-        // Dark composite with more depth
         vec3 darkCol = mix(c3, colBase, v0);
-        darkCol = mix(darkCol, c4, v1 * 0.15);  // Pink highlights
+        darkCol = mix(darkCol, c4, v1 * 0.15);
         darkCol = (darkCol + v1) * v2 * v3;
         darkCol = clamp(darkCol, 0.0, 1.0);
 
-        // Light composite with better blending
         vec3 lightCol = (colBase + v1 * 0.9) * mix(1.0, v2 * v3, fadeAmt);
         lightCol = mix(backgroundColor, lightCol, v0);
         lightCol = clamp(lightCol, 0.0, 1.0);
 
-        // Final mix with background luminance
         vec3 fc = mix(darkCol, lightCol, bgLum);
 
-        // Add subtle outer glow
         float outerGlow = smoothstep(1.2, 0.8, len) * 0.15;
         fc += c1 * outerGlow * (0.5 + 0.5 * sin(iTime * 2.0));
 
@@ -267,17 +256,14 @@ class OrbRenderer {
         float sz = min(iResolution.x, iResolution.y);
         vec2 uv = (fragCoord - center) / sz * 2.0;
 
-        // Apply rotation with smoother motion
         float s2 = sin(rot);
         float c2 = cos(rot);
         uv = vec2(c2 * uv.x - s2 * uv.y, s2 * uv.x + c2 * uv.y);
 
-        /// Enhanced wavy distortion with breathing
         float waveIntensity = hover * hoverIntensity * (1.0 + breath * 0.3);
         uv.x += waveIntensity * 0.08 * sin(uv.y * 12.0 + iTime * 1.2);
         uv.y += waveIntensity * 0.08 * sin(uv.x * 12.0 + iTime * 1.2 + 1.047);
 
-        // Additional subtle distortion
         uv += snoise3(vec3(uv * 0.5, iTime * 0.2)) * 0.02 * hover;
 
         return draw(uv);
@@ -287,8 +273,7 @@ class OrbRenderer {
         vec2 fc = vUv * iResolution.xy;
         vec4 col = mainImage(fc);
         gl_FragColor = vec4(col.rgb * col.a, col.a);
-    }
-    \`;
+    }`;
 
     _compile(type, src) {
         const gl = this.gl;
@@ -334,7 +319,6 @@ class OrbRenderer {
         gl.enableVertexAttribArray(uvLoc);
         gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 0, 0);
 
-        // Enhanced uniforms including new ones
         this.u = {};
         [
             'iTime', 'iResolution', 'hue', 'hover', 'rot', 
@@ -366,19 +350,15 @@ class OrbRenderer {
         const dt = this.lastTs ? t - this.lastTs : 0.016;
         this.lastTs = t;
 
-        // Smoother hover interpolation
         this.currentHover += (this.targetHover - this.currentHover) * Math.min(dt * 3.5, 1);
 
-        // Rotation with variable speed based on activity
         const rotSpeed = this.currentHover > 0.5 ? 0.5 : 0.15;
         if (this.currentHover > 0.3) this.currentRot += dt * rotSpeed;
 
-        // Breathing animation
-        this.breathPhase += dt * 1.2;
+        this.breathPhase += dt * this.breathSpeed;
         this.targetBreath = this.currentHover > 0.5 ? 1.0 : 0.3;
         this.currentBreath += (this.targetBreath - this.currentBreath) * Math.min(dt * 2.0, 1);
 
-        // Color cycling
         this.colorCycle += dt * this.colorCycleSpeed;
 
         gl.clear(gl.COLOR_BUFFER_BIT);
@@ -399,9 +379,26 @@ class OrbRenderer {
 
     setActive(active) {
         this.targetHover = active ? 1.0 : 0.0;
-        const ctn = this.container;
-        if (active) ctn.classList.add('active');
-        else ctn.classList.remove('active');
+    }
+
+    setHue(hue) {
+        this.hue = hue;
+    }
+
+    setHoverIntensity(intensity) {
+        this.hoverIntensity = intensity;
+    }
+
+    setBackgroundColor(r, g, b) {
+        this.bgColor = [r, g, b];
+    }
+
+    setColorCycleSpeed(speed) {
+        this.colorCycleSpeed = speed;
+    }
+
+    setBreathSpeed(speed) {
+        this.breathSpeed = speed;
     }
 
     destroy() {
@@ -411,4 +408,63 @@ class OrbRenderer {
         const ext = this.gl.getExtension('WEBGL_lose_context');
         if (ext) ext.loseContext();
     }
+}
+
+/* ================================================================
+   Auto-initialization & Interaction Setup
+   ================================================================ */
+
+(function() {
+    const container = document.getElementById('orb-container');
+    if (!container) {
+        console.warn('OrbRenderer: No #orb-container element found. Call initOrb(container, options) manually.');
+        return;
+    }
+    initOrb(container);
+})();
+
+function initOrb(container, options = {}) {
+    const orb = new OrbRenderer(container, {
+        hue: options.hue ?? 0,
+        hoverIntensity: options.hoverIntensity ?? 0.2,
+        backgroundColor: options.backgroundColor ?? [0.02, 0.02, 0.08],
+        colorCycleSpeed: options.colorCycleSpeed ?? 0.1,
+        breathSpeed: options.breathSpeed ?? 1.2
+    });
+
+    let isHovered = false;
+
+    function toggleHover() {
+        isHovered = !isHovered;
+        orb.setActive(isHovered);
+    }
+
+    container.addEventListener('mouseenter', () => {
+        if (!isHovered) orb.setActive(true);
+    });
+
+    container.addEventListener('mouseleave', () => {
+        if (!isHovered) orb.setActive(false);
+    });
+
+    container.addEventListener('click', toggleHover);
+
+    // Mouse parallax effect
+    container.addEventListener('mousemove', (e) => {
+        const rect = container.getBoundingClientRect();
+        const x = (e.clientX - rect.left - rect.width/2) / rect.width;
+        const y = (e.clientY - rect.top - rect.height/2) / rect.height;
+        container.style.transform = `perspective(1000px) rotateY(${x * 10}deg) rotateX(${-y * 10}deg) scale(${isHovered ? 1.05 : 1.02})`;
+    });
+
+    container.addEventListener('mouseleave', () => {
+        container.style.transform = isHovered ? 'scale(1.05)' : 'scale(1)';
+    });
+
+    return orb;
+}
+
+// Export for module systems
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { OrbRenderer, initOrb };
 }

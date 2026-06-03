@@ -53,6 +53,15 @@ realtime_service = RealtimeService()
 personality_service = PersonalityService()
 
 
+@app.on_event("startup")
+async def startup_event():
+    # Trigger a non-blocking background execution thread to pre-warm the embeddings cache
+    logging.info("[STARTUP] Launching non-blocking background model pre-warming task...")
+    loop = asyncio.get_running_loop()
+    # Call your memory service embeddings loader class method asynchronously
+    loop.run_in_executor(None, memory_service._get_embeddings)
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}

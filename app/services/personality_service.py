@@ -3,9 +3,14 @@ import sys
 import logging
 from typing import Optional, List
 
-# Ensure the root directory is in sys.path so we can import 'config' and 'app' modules when run directly
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+# Setup basic logger
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Ensure the project root is in sys.path when running as a standalone script
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 import config
 from app.services.memory_service import MemoryService
@@ -13,63 +18,99 @@ from app.services.memory_service import MemoryService
 class PersonalityService:
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Instantiate the background data layer
         self.memory = MemoryService()
+        
+        # File paths
+        self.personality_file = os.path.join(project_root, "database", "learning_data", "victor_personality.txt")
+        self.context_file = os.path.join(project_root, "database", "learning_data", "system_context.txt")
+        
+        self.victor_personality_cache = ""
+        self.system_context_cache = ""
+        
+        self.refresh_persona()
+        
+    def refresh_persona(self):
+        """
+        Re-read text data files from the disk to update the internal 
+        system prompt cache strings dynamically.
+        """
+        self.logger.info("Refreshing persona definitions from disk...")
+        
+        # Load personality instructions
+        try:
+            with open(self.personality_file, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    self.victor_personality_cache = content
+                else:
+                    raise ValueError("File is empty")
+        except Exception as e:
+            self.logger.warning(f"Failed to read personality file at {self.personality_file}: {e}. Using default.")
+            self.victor_personality_cache = "You are an elite, highly intelligent AI. You possess a dry wit and sharp helpfulness."
+            
+        # Load system context instructions
+        try:
+            with open(self.context_file, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    self.system_context_cache = content
+                else:
+                    raise ValueError("File is empty")
+        except Exception as e:
+            self.logger.warning(f"Failed to read context file at {self.context_file}: {e}. Using default.")
+            self.system_context_cache = "You are a systems companion assisting with automated tasks and providing crisp technical insights."
 
-    def get_identity_prompt(self, dynamic_context: str = "") -> str:
-        # Retrieve static user profile parameters safely from configuration values
+    def get_system_prompt(self, context_grounding: str = "") -> str:
+        """
+        Compile the single master system instruction prompt using cached character traits,
+        directives, and optional real-time context grounding.
+        """
         assistant_name = getattr(config, 'ASSISTANT_NAME', 'VICTOR')
         user_title = getattr(config, 'VICTOR_USER_TITLE', 'Sir')
         owner_name = getattr(config, 'VICTOR_OWNER_NAME', 'Shashank')
-
-        # Compute paths for character configuration files
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        personality_path = os.path.join(base_dir, 'database', 'learning_data', 'victor_personality.txt')
-        context_path = os.path.join(base_dir, 'database', 'learning_data', 'system_context.txt')
-
-        # Read character configurations from disk or fallback to safe structural default definitions
-        try:
-            with open(personality_path, 'r', encoding='utf-8') as f:
-                personality_text = f.read().strip()
-        except Exception as e:
-            self.logger.warning(f"Could not read {personality_path}: {e}")
-            personality_text = "Tone guidelines: Highly intelligent, clean, technically elite, precise, and possessing a witty, dry, systems-companion humor. You must avoid long conversational filler or generic automated disclosures (e.g., 'As an AI language model...')."
-
-        try:
-            with open(context_path, 'r', encoding='utf-8') as f:
-                system_context_text = f.read().strip()
-        except Exception as e:
-            self.logger.warning(f"Could not read {context_path}: {e}")
-            system_context_text = "You are the central core processing engine operating locally on this machine."
-
-        # Assemble comprehensive, explicit system prompt wrapper string
+        
         prompt_parts: List[str] = [
-            f"Your name is strictly {assistant_name}.",
-            f"You are interacting with your owner {owner_name}, whom you address respectfully yet sharply as \"{user_title}\".",
+            f"You are {assistant_name}, a systems companion to {owner_name} (address them as {user_title}).",
             "",
-            "--- BEHAVIORAL & TONE GUIDELINES ---",
-            personality_text,
+            "CORE TONE RULES:",
+            "- Your responses must be technically precise, elite, and highly intelligent.",
+            "- Exhibit a witty, sharply helpful, and dry-humored personality.",
+            "- Skip all generic corporate automated prefaces or AI disclaimers (e.g. NEVER say 'As an AI language model...', 'I am happy to help', etc.). Just answer directly and accurately.",
             "",
-            "--- SYSTEM CONTEXT ---",
-            system_context_text
+            "CHARACTER TRAITS & DIRECTIVES:",
+            self.victor_personality_cache,
+            "",
+            "SYSTEM CONTEXT:",
+            self.system_context_cache
         ]
-
-        if dynamic_context:
+        
+        if context_grounding and context_grounding.strip():
             prompt_parts.extend([
                 "",
-                "GROUNDING INFORMATION:",
-                dynamic_context
+                "GROUNDING INFORMATION CONTEXT:",
+                context_grounding.strip()
             ])
-
+            
         return "\n".join(prompt_parts)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    print("[TEST] Initializing PersonalityService...")
     try:
         service = PersonalityService()
-        prompt = service.get_identity_prompt(dynamic_context="Test vector grounding data chunk")
         
-        print("=== VICTOR SYSTEM PROMPT BLOCK ===")
+        print("\n[TEST] Loaded Configurations:")
+        print(f"ASSISTANT_NAME: {getattr(config, 'ASSISTANT_NAME', 'VICTOR')}")
+        print(f"VICTOR_USER_TITLE: {getattr(config, 'VICTOR_USER_TITLE', 'Sir')}")
+        print(f"VICTOR_OWNER_NAME: {getattr(config, 'VICTOR_OWNER_NAME', 'Shashank')}")
+        
+        print("\n[TEST] Generating System Prompt with mock grounding...")
+        prompt = service.get_system_prompt(context_grounding="Mock vector grounding snippet: 'System memory footprint is optimal at 42%. Windows updates pending.'")
+        
+        print("\n--- COMPILED SYSTEM PROMPT ---")
         print(prompt)
-        print("==================================")
+        print("------------------------------\n")
+        
     except Exception as e:
-        print(f"Test failed: {e}")
+        print(f"[TEST] Failed to initialize PersonalityService: {e}")

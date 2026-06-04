@@ -4,6 +4,7 @@ from app.services.ai_service import AIService
 from app.services.memory_service import MemoryService
 from app.services.personality_service import PersonalityService
 from app.services.realtime_service import RealtimeService
+from app.services.task_executor import TaskExecutor
 from app.services.vision_service import VisionService
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ class BrainService:
         self.memory_service = MemoryService()
         self.personality_service = PersonalityService()
         self.realtime_service = RealtimeService()
+        self.task_executor = TaskExecutor()
         self.vision_service = VisionService()
 
     def check_deterministic_guards(self, query: str) -> dict | None:
@@ -119,6 +121,45 @@ Example Expected Output:
             except Exception as e:
                 logger.error(f"Vision routing failed: {e}")
                 return f"Error analyzing visual stream: {e}"
+
+        # Intercept Task Capability Payload
+        if capability == "task":
+            try:
+                task_extraction_prompt = """You are a Task Parameter Extractor.
+Extract the intended action and target from the user's query.
+Return RAW JSON ONLY containing "action" (must be "open_url" or "launch_tool") and "target" (the URL or the tool executable name).
+Example 1: {"action": "open_url", "target": "https://github.com"}
+Example 2: {"action": "launch_tool", "target": "code"}"""
+                task_json_str = await self.ai_service.generate_text(
+                    prompt=cleaned_query,
+                    system_prompt=task_extraction_prompt
+                )
+                
+                clean_json_str = task_json_str.replace("```json", "").replace("```", "").strip()
+                command_data = json.loads(clean_json_str)
+                
+                task_result = await self.task_executor.execute_task(command_data)
+                
+                # Log the occurrence
+                self.memory_service.add_message(session_id, "user", f"[System Task]: {cleaned_query}")
+                self.memory_service.add_message(session_id, "system", task_result)
+                
+                # Feed confirmation back to personality layer
+                context_data = self.memory_service.build_context(session_id, query)
+                base_context = context_data.get("system_prompt", "")
+                personality_prompt = self.personality_service.get_behavior_prompt(base_context)
+                
+                notification_prompt = f"{personality_prompt}\n\nThe system executed a task. The result was: {task_result}\nNotify the user concisely."
+                
+                response_text = await self.ai_service.generate_text(
+                    prompt="Acknowledge the task execution.",
+                    system_prompt=notification_prompt
+                )
+                self.memory_service.add_message(session_id, "assistant", response_text)
+                return response_text
+            except Exception as e:
+                logger.error(f"Task routing failed: {e}")
+                return f"Error executing task: {e}"
 
         # Step B: Fetch the structural background context
         context_data = self.memory_service.build_context(session_id, query)

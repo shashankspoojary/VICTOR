@@ -1,7 +1,8 @@
 const state = {
     session_id: "test_session_001",
     current_image_base64: null,
-    mode: "VICTOR"
+    mode: "VICTOR",
+    cameraStream: null
 };
 
 const dom = {
@@ -14,7 +15,10 @@ const dom = {
     executeBtn: document.getElementById('execute-btn'),
     imagePreviewPane: document.getElementById('image-preview-pane'),
     imageThumbnail: document.getElementById('image-thumbnail'),
-    removeImageBtn: document.getElementById('remove-image-btn')
+    removeImageBtn: document.getElementById('remove-image-btn'),
+    cameraToggleBtn: document.getElementById('camera-toggle-btn'),
+    webcamPreview: document.getElementById('webcam-preview'),
+    snapshotCanvas: document.getElementById('snapshot-canvas')
 };
 
 async function checkStatus() {
@@ -69,9 +73,51 @@ dom.removeImageBtn.addEventListener('click', () => {
     dom.imageInput.value = '';
 });
 
+dom.cameraToggleBtn.addEventListener('click', async () => {
+    if (state.cameraStream) {
+        state.cameraStream.getTracks().forEach(track => track.stop());
+        state.cameraStream = null;
+        dom.webcamPreview.style.display = 'none';
+        dom.webcamPreview.srcObject = null;
+    } else {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            state.cameraStream = stream;
+            dom.webcamPreview.srcObject = stream;
+            dom.webcamPreview.style.display = 'block';
+        } catch (err) {
+            console.error("Error accessing webcam: ", err);
+            appendMessage('system', "Error: Could not access webcam.");
+        }
+    }
+});
+
 async function executeCommand() {
-    const text = dom.queryInput.value.trim();
-    if (!text && !state.current_image_base64) return;
+    let text = dom.queryInput.value.trim();
+    let isCameraActive = false;
+    let cameraBase64 = null;
+
+    if (state.cameraStream) {
+        isCameraActive = true;
+        const video = dom.webcamPreview;
+        const canvas = dom.snapshotCanvas;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        const dataUrl = canvas.toDataURL('image/jpeg');
+        cameraBase64 = dataUrl.split(',')[1];
+        
+        text = text ? "TTCAMTOKENTT " + text : "TTCAMTOKENTT";
+        
+        state.cameraStream.getTracks().forEach(track => track.stop());
+        state.cameraStream = null;
+        dom.webcamPreview.style.display = 'none';
+        dom.webcamPreview.srcObject = null;
+    }
+
+    if (!text && !state.current_image_base64 && !isCameraActive) return;
     
     dom.queryInput.value = '';
     appendMessage('user', text || "[Image Attached]");
@@ -83,7 +129,10 @@ async function executeCommand() {
 
     let endpoint = '/api/chat';
     
-    if (state.current_image_base64) {
+    if (isCameraActive) {
+        endpoint = '/api/vision';
+        payload.image = cameraBase64;
+    } else if (state.current_image_base64) {
         endpoint = '/api/vision';
         // The API schema uses `image: str` for the base64 string
         const base64Data = state.current_image_base64.split(',')[1] || state.current_image_base64;

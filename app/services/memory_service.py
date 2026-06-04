@@ -17,6 +17,35 @@ class MemoryService:
             "system_context.txt",
             "custom_notes.txt"
         ]
+        self.knowledge_library_dir = Path("knowledge_library")
+        self.knowledge_library_dir.mkdir(parents=True, exist_ok=True)
+
+    def load_knowledge_library(self, category: str) -> str:
+        """
+        Recursively reads all .txt, .md, or code files inside knowledge_library/{category}.
+        Concatenates their text strings into a structured reference block.
+        """
+        category_dir = self.knowledge_library_dir / category
+        if not category_dir.exists() or not category_dir.is_dir():
+            return ""
+
+        allowed_extensions = {".txt", ".md", ".py", ".js", ".html", ".css", ".json", ".sh", ".yml", ".yaml"}
+        content_parts = []
+        
+        try:
+            for filepath in category_dir.rglob("*"):
+                if filepath.is_file() and filepath.suffix.lower() in allowed_extensions:
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            file_content = f.read().strip()
+                            if file_content:
+                                content_parts.append(f"--- Knowledge Library Reference [{filepath.name}] ---\n{file_content}\n---")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+            
+        return "\n\n".join(content_parts)
 
     def load_learning_data(self) -> dict:
         """
@@ -60,11 +89,12 @@ class MemoryService:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=4)
 
-    def build_context(self, session_id: str, current_query: str) -> dict:
+    def build_context(self, session_id: str, current_query: str, mode: str = None) -> dict:
         """
         Master context assembler method.
         Gathers temporal info, reads learning data, fetches chat history,
         and combines these into a structured system prompt dictionary.
+        Also loads dynamic context from knowledge library if mode is KNOWLEDGE_MODE.
         """
         temporal_info = get_temporal_string()
         learning_data = self.load_learning_data()
@@ -83,6 +113,20 @@ class MemoryService:
         if learning_data.get("custom_notes.txt"):
             system_prompt_parts.append(f"--- Custom Notes ---\n{learning_data['custom_notes.txt']}")
             
+        if mode == 'KNOWLEDGE_MODE':
+            category = "custom"
+            query_lower = current_query.lower()
+            if any(kw in query_lower for kw in ["code", "programming", "python", "javascript", "html", "css", "bug"]):
+                category = "coding"
+            elif "script" in query_lower:
+                category = "scripts"
+            elif "business" in query_lower:
+                category = "business"
+            
+            knowledge_data = self.load_knowledge_library(category)
+            if knowledge_data:
+                system_prompt_parts.append(knowledge_data)
+
         system_prompt = "\n\n".join(system_prompt_parts)
         
         return {

@@ -97,7 +97,7 @@ Example Expected Output:
                 "mode": "VICTOR_MODE"
             }
 
-    async def execute_query(self, session_id: str, query: str, base64_image: str = None) -> str:
+    async def execute_query(self, session_id: str, query: str, base64_image: str = None, mode: str = None) -> str:
         """
         The Master Interaction Loop.
         Routes the intent, builds context, triggers capabilities like research if needed,
@@ -106,7 +106,7 @@ Example Expected Output:
         # Step A: Run route_intent
         route = await self.route_intent(session_id, query)
         capability = route.get("capability")
-        mode = route.get("mode")
+        mode = mode or route.get("mode")
         cleaned_query = route.get("cleaned_query", query)
 
         # Intercept Vision Capability Payload
@@ -145,7 +145,7 @@ Example 2: {"action": "launch_tool", "target": "code"}"""
                 self.memory_service.add_message(session_id, "system", task_result)
                 
                 # Feed confirmation back to personality layer
-                context_data = self.memory_service.build_context(session_id, query)
+                context_data = self.memory_service.build_context(session_id, query, mode=mode)
                 base_context = context_data.get("system_prompt", "")
                 personality_prompt = self.personality_service.get_behavior_prompt(base_context)
                 
@@ -162,7 +162,7 @@ Example 2: {"action": "launch_tool", "target": "code"}"""
                 return f"Error executing task: {e}"
 
         # Step B: Fetch the structural background context
-        context_data = self.memory_service.build_context(session_id, query)
+        context_data = self.memory_service.build_context(session_id, query, mode=mode)
         base_context = context_data.get("system_prompt", "")
         chat_history = context_data.get("chat_history", [])
 

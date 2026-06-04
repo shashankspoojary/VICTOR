@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VICTOR Assistant</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="layout-grid">
+        <!-- Sidebar Panel -->
+        <aside class="sidebar-panel">
+            <div class="brand">VICTOR</div>
+            <div class="status-indicators">
+                <div class="status online">System Online</div>
+            </div>
+            <div class="mode-toggles">
+                <button class="mode-btn active" data-mode="VICTOR">VICTOR</button>
+                <button class="mode-btn" data-mode="KNOWLEDGE">KNOWLEDGE</button>
+                <button class="mode-btn" data-mode="RESEARCH">RESEARCH</button>
+            </div>
+        </aside>
+
+        <!-- Main Interaction Feed -->
+        <main class="interaction-feed">
+            <canvas id="orbCanvas"></canvas>
+            <div id="chat-container" class="chat-container">
+                <!-- Chat messages stream here -->
+                <div class="message system">
+                    <div class="message-content">Awaiting command...</div>
+                </div>
+            </div>
+            
+            <!-- Tactical Input Controller -->
+            <div class="input-controller">
+                <form id="chat-form">
+                    <input type="text" id="chat-input" placeholder="Enter query or command..." autocomplete="off" required>
+                    <button type="submit" id="send-btn">Execute</button>
+                </form>
+            </div>
+        </main>
+    </div>
+    <script src="orb.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.services.brain_service import BrainService
@@ -20,6 +21,7 @@ brain_service = BrainService()
 class ChatRequest(BaseModel):
     message: str
     session_id: str
+    mode: str | None = None
 
 class VisionRequest(BaseModel):
     message: str
@@ -43,7 +45,8 @@ async def chat_endpoint(payload: ChatRequest):
     """
     response = await brain_service.execute_query(
         session_id=payload.session_id,
-        query=payload.message
+        query=payload.message,
+        mode=payload.mode
     )
     return {"response": response}
 
@@ -61,3 +64,6 @@ async def vision_endpoint(payload: VisionRequest):
         base64_image=payload.image
     )
     return {"response": response}
+
+# Mount static frontend
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

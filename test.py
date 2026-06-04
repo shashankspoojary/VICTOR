@@ -1,31 +1,31 @@
 import asyncio
 import logging
+import sys
 from rich.console import Console
-from app.services.brain_service import BrainService
+from rich.panel import Panel
+from app.services.realtime_service import RealtimeService
 
 # Setup basic logging
+# Fix for windows charmap encode errors
+if sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 console = Console()
 
-async def run_test(brain_service: BrainService, session_id: str, query: str, test_name: str):
-    console.print(f"\n[bold cyan]Starting {test_name}[/bold cyan] -> Query: '{query}'")
-    result = await brain_service.route_intent(session_id, query)
-    console.print(f"[bold green]{test_name} Output Payload:[/bold green]")
-    console.print_json(data=result)
-
 async def main():
-    console.print("[bold green]--- Starting VICTOR Cognitive Routing Brain Test ---[/bold green]")
+    console.print("[bold green]--- Starting VICTOR Realtime Service Test ---[/bold green]")
     
-    brain_service = BrainService()
-    session_id = "test_session_brain"
+    realtime_service = RealtimeService()
+    query = "Latest developments in space exploration 2026"
     
-    # Run three parallel test executions
-    await asyncio.gather(
-        run_test(brain_service, session_id, "Can you look at this? TTCAMTOKENTT", "Test A"),
-        run_test(brain_service, session_id, "Who won the latest Formula 1 race?", "Test B"),
-        run_test(brain_service, session_id, "Explain how a binary search tree works.", "Test C")
-    )
+    console.print(f"\n[bold cyan]Executing search_web[/bold cyan] -> Query: '{query}'")
+    try:
+        result = await realtime_service.search_web(query)
+        console.print(Panel(result, title="[bold green]Realtime Search Context[/bold green]", expand=False))
+    except Exception as e:
+        console.print(f"[bold red]Search failed: {e}[/bold red]")
     
     console.print("\n[bold green]--- Test Complete ---[/bold green]")
 

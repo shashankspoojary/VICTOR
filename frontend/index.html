@@ -3,44 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VICTOR Assistant</title>
+    <title>VICTOR Dashboard</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="layout-grid">
-        <!-- Sidebar Panel -->
-        <aside class="sidebar-panel">
-            <div class="brand">VICTOR</div>
-            <div class="status-indicators">
-                <div class="status online">System Online</div>
-            </div>
-            <div class="mode-toggles">
-                <button class="mode-btn active" data-mode="VICTOR">VICTOR</button>
-                <button class="mode-btn" data-mode="KNOWLEDGE">KNOWLEDGE</button>
-                <button class="mode-btn" data-mode="RESEARCH">RESEARCH</button>
-            </div>
-        </aside>
+    <div class="dashboard-container">
+        <!-- Status Bar -->
+        <header class="status-bar">
+            <div class="status-indicator" id="status-indicator"></div>
+            <span id="status-text">Connecting...</span>
+        </header>
 
-        <!-- Main Interaction Feed -->
-        <main class="interaction-feed">
-            <canvas id="orbCanvas"></canvas>
-            <div id="chat-container" class="chat-container">
-                <!-- Chat messages stream here -->
-                <div class="message system">
-                    <div class="message-content">Awaiting command...</div>
-                </div>
-            </div>
-            
-            <!-- Tactical Input Controller -->
-            <div class="input-controller">
-                <form id="chat-form">
-                    <input type="text" id="chat-input" placeholder="Enter query or command..." autocomplete="off" required>
-                    <button type="submit" id="send-btn">Execute</button>
-                </form>
+        <!-- Mode Selection -->
+        <nav class="mode-selection">
+            <button class="mode-btn active" data-mode="VICTOR">VICTOR</button>
+            <button class="mode-btn" data-mode="KNOWLEDGE">KNOWLEDGE</button>
+            <button class="mode-btn" data-mode="RESEARCH">RESEARCH</button>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Orb Canvas Placeholder -->
+            <canvas id="orb-canvas"></canvas>
+
+            <!-- Chat History -->
+            <div id="chat-history" class="chat-history">
+                <!-- Messages will be appended here -->
             </div>
         </main>
+
+        <!-- Input Console -->
+        <footer class="input-console">
+            <div id="image-preview-pane" class="image-preview-pane hidden">
+                <img id="image-thumbnail" src="" alt="Selected Image">
+                <button id="remove-image-btn" class="remove-btn">&times;</button>
+            </div>
+            <div class="input-row">
+                <label for="image-input" class="file-upload-label">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                </label>
+                <input type="file" id="image-input" accept="image/*" class="hidden-input">
+                <input type="text" id="query-input" placeholder="Enter command or query...">
+                <button id="execute-btn" class="execute-btn">EXECUTE</button>
+            </div>
+        </footer>
     </div>
+
     <script src="orb.js"></script>
     <script src="script.js"></script>
 </body>

@@ -56,7 +56,7 @@ Available Capabilities:
 - coding: For writing, explaining, modifying, or reviewing programming code.
 - script_writing: For generating long-form texts, stories, or scripts.
 - vision: For analyzing visual input or images.
-- task: For executing system tasks or background processes.
+- task: For executing system tasks, background processes, or scanning/checking local directories and filesystem paths.
 
 Available Modes:
 - VICTOR_MODE: Standard tactical, concise, AI assistant mode.
@@ -127,9 +127,11 @@ Example Expected Output:
             try:
                 task_extraction_prompt = """You are a Task Parameter Extractor.
 Extract the intended action and target from the user's query.
-Return RAW JSON ONLY containing "action" (must be "open_url" or "launch_tool") and "target" (the URL or the tool executable name).
+Return RAW JSON ONLY containing "action" (must be "open_url", "launch_tool", or "scan_directory") and "target" (the URL, tool executable name, or folder path).
 Example 1: {"action": "open_url", "target": "https://github.com"}
-Example 2: {"action": "launch_tool", "target": "code"}"""
+Example 2: {"action": "launch_tool", "target": "code"}
+Example 3: {"action": "scan_directory", "target": "./workspace"}
+If the user asks to "check a project folder", "scan directory", or analyze filesystem layout, the action MUST be "scan_directory"."""
                 task_json_str = await self.ai_service.generate_text(
                     prompt=cleaned_query,
                     system_prompt=task_extraction_prompt
@@ -137,6 +139,14 @@ Example 2: {"action": "launch_tool", "target": "code"}"""
                 
                 clean_json_str = task_json_str.replace("```json", "").replace("```", "").strip()
                 command_data = json.loads(clean_json_str)
+
+                if command_data.get("action") == "scan_directory":
+                    target_path = command_data.get("target")
+                    task_result = await self.task_executor.scan_workspace_directory(target_path)
+                    
+                    self.memory_service.add_message(session_id, "user", f"[System Task - Scan Directory]: {cleaned_query}")
+                    self.memory_service.add_message(session_id, "assistant", task_result)
+                    return task_result
                 
                 task_result = await self.task_executor.execute_task(command_data)
                 

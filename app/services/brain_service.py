@@ -4,6 +4,7 @@ from app.services.ai_service import AIService
 from app.services.memory_service import MemoryService
 from app.services.personality_service import PersonalityService
 from app.services.realtime_service import RealtimeService
+from app.services.vision_service import VisionService
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ class BrainService:
         self.memory_service = MemoryService()
         self.personality_service = PersonalityService()
         self.realtime_service = RealtimeService()
+        self.vision_service = VisionService()
 
     def check_deterministic_guards(self, query: str) -> dict | None:
         """
@@ -93,7 +95,7 @@ Example Expected Output:
                 "mode": "VICTOR_MODE"
             }
 
-    async def execute_query(self, session_id: str, query: str) -> str:
+    async def execute_query(self, session_id: str, query: str, base64_image: str = None) -> str:
         """
         The Master Interaction Loop.
         Routes the intent, builds context, triggers capabilities like research if needed,
@@ -103,6 +105,20 @@ Example Expected Output:
         route = await self.route_intent(session_id, query)
         capability = route.get("capability")
         mode = route.get("mode")
+        cleaned_query = route.get("cleaned_query", query)
+
+        # Intercept Vision Capability Payload
+        if capability == "vision":
+            try:
+                # Delegate generation directly to VisionService.analyze_image
+                response_text = await self.vision_service.analyze_image(cleaned_query, base64_image)
+                # Log history
+                self.memory_service.add_message(session_id, "user", f"[Vision Input]: {cleaned_query}")
+                self.memory_service.add_message(session_id, "assistant", response_text)
+                return response_text
+            except Exception as e:
+                logger.error(f"Vision routing failed: {e}")
+                return f"Error analyzing visual stream: {e}"
 
         # Step B: Fetch the structural background context
         context_data = self.memory_service.build_context(session_id, query)

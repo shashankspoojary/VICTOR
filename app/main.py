@@ -1,8 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.services.brain_service import BrainService
+from app.services.memory_service import MemoryService
+from app.services.ai_service import AIService
+import os
 
 app = FastAPI(title="VICTOR API")
 
@@ -22,6 +25,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str
     mode: str | None = None
+    ttsEnabled: bool = False
 
 class VisionRequest(BaseModel):
     message: str
@@ -48,6 +52,12 @@ async def chat_endpoint(payload: ChatRequest):
         query=payload.message,
         mode=payload.mode
     )
+    
+    if payload.ttsEnabled:
+        ai_service = AIService()
+        audio_url = await ai_service.generate_speech(response, payload.session_id)
+        return {"response": response, "audio_url": audio_url}
+        
     return {"response": response}
 
 @app.post("/api/vision")
@@ -65,5 +75,20 @@ async def vision_endpoint(payload: VisionRequest):
     )
     return {"response": response}
 
+@app.post("/api/upload")
+async def upload_document(file: UploadFile = File(...), session_id: str = Form(...)):
+    raw_bytes = await file.read()
+    memory_service = MemoryService()
+    context_str = memory_service.extract_document_text(file.filename, raw_bytes)
+    if context_str:
+        memory_service.add_message(session_id, "system", context_str)
+        return {"status": "success", "message": "Document added to context."}
+    return {"status": "error", "message": "Failed to extract document context."}
+
+
+# Ensure workspace directory exists before mounting
+os.makedirs("workspace", exist_ok=True)
+
 # Mount static frontend
+app.mount("/static_workspace", StaticFiles(directory="workspace"), name="workspace")
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

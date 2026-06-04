@@ -1,6 +1,8 @@
 import logging
 import re
+import os
 from typing import Optional
+import edge_tts
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -54,3 +56,15 @@ class AIService:
         raw_content = response.content
         cleaned_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
         return cleaned_content
+
+    async def generate_speech(self, text: str, session_id: str) -> str:
+        clean_text = re.sub(r'[*#_~`]', '', text)
+        communicate = edge_tts.Communicate(clean_text, voice=config.TTS_VOICE, rate=config.TTS_RATE)
+        
+        output_dir = "workspace/temp"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = f"{output_dir}/speech_{session_id}.mp3"
+        
+        await communicate.save(output_path)
+        
+        return f"/static_workspace/temp/speech_{session_id}.mp3"

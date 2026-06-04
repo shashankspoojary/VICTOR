@@ -20,6 +20,10 @@
             <button class="mode-btn" data-mode="KNOWLEDGE">KNOWLEDGE</button>
             <button class="mode-btn" data-mode="RESEARCH">RESEARCH</button>
         </nav>
+        <div class="audio-controls">
+            <button id="tts-toggle-btn" class="control-btn active" title="Toggle TTS Output">🔊 TTS</button>
+            <button id="voice-toggle-btn" class="control-btn" title="Toggle Voice Input">🎙️ VOICE</button>
+        </div>
 
         <!-- Main Content Area -->
         <main class="main-content">
@@ -38,14 +42,12 @@
                 <img id="image-thumbnail" src="" alt="Selected Image">
                 <button id="remove-image-btn" class="remove-btn">&times;</button>
             </div>
-            <div id="camera-container" style="margin-bottom: 10px;">
+            <div class="webcam-container">
                 <video id="webcam-preview" autoplay playsinline style="display:none; max-width: 200px; border-radius: 4px;"></video>
                 <canvas id="snapshot-canvas" style="display:none;"></canvas>
             </div>
             <div class="input-row">
-                <button id="camera-toggle-btn" class="camera-btn" title="Toggle Camera" style="background:transparent; border:none; color:inherit; cursor:pointer; padding:0 8px;">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-                </button>
+                <button id="camera-toggle-btn" class="camera-btn" title="Toggle Camera">📷</button>
                 <label for="image-input" class="file-upload-label">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
                 </label>

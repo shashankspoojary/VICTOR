@@ -2,7 +2,9 @@ const state = {
     session_id: "test_session_001",
     current_image_base64: null,
     mode: "VICTOR",
-    cameraStream: null
+    camera_stream: null,
+    ttsEnabled: true,
+    voiceEnabled: false
 };
 
 const dom = {
@@ -18,7 +20,9 @@ const dom = {
     removeImageBtn: document.getElementById('remove-image-btn'),
     cameraToggleBtn: document.getElementById('camera-toggle-btn'),
     webcamPreview: document.getElementById('webcam-preview'),
-    snapshotCanvas: document.getElementById('snapshot-canvas')
+    snapshotCanvas: document.getElementById('snapshot-canvas'),
+    ttsToggleBtn: document.getElementById('tts-toggle-btn'),
+    voiceToggleBtn: document.getElementById('voice-toggle-btn')
 };
 
 async function checkStatus() {
@@ -74,31 +78,40 @@ dom.removeImageBtn.addEventListener('click', () => {
 });
 
 dom.cameraToggleBtn.addEventListener('click', async () => {
-    if (state.cameraStream) {
-        state.cameraStream.getTracks().forEach(track => track.stop());
-        state.cameraStream = null;
+    if (state.camera_stream) {
+        state.camera_stream.getTracks().forEach(track => track.stop());
+        state.camera_stream = null;
         dom.webcamPreview.style.display = 'none';
         dom.webcamPreview.srcObject = null;
     } else {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            state.cameraStream = stream;
+            state.camera_stream = stream;
             dom.webcamPreview.srcObject = stream;
             dom.webcamPreview.style.display = 'block';
         } catch (err) {
-            console.error("Error accessing webcam: ", err);
-            appendMessage('system', "Error: Could not access webcam.");
+            console.error("Camera access error:", err);
         }
     }
 });
 
+dom.ttsToggleBtn.addEventListener('click', () => {
+    state.ttsEnabled = !state.ttsEnabled;
+    dom.ttsToggleBtn.classList.toggle('active');
+});
+
+dom.voiceToggleBtn.addEventListener('click', () => {
+    state.voiceEnabled = !state.voiceEnabled;
+    dom.voiceToggleBtn.classList.toggle('active');
+});
+
 async function executeCommand() {
     let text = dom.queryInput.value.trim();
-    let isCameraActive = false;
-    let cameraBase64 = null;
 
-    if (state.cameraStream) {
-        isCameraActive = true;
+    if (!text && !state.current_image_base64 && !state.camera_stream) return;
+    
+    let uiText = text;
+    if (state.camera_stream) {
         const video = dom.webcamPreview;
         const canvas = dom.snapshotCanvas;
         canvas.width = video.videoWidth;
@@ -106,33 +119,28 @@ async function executeCommand() {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         
-        const dataUrl = canvas.toDataURL('image/jpeg');
-        cameraBase64 = dataUrl.split(',')[1];
+        state.current_image_base64 = canvas.toDataURL('image/jpeg');
+        uiText = text || "[Camera Snapshot]";
+        text = "TTCAMTOKENTT " + text;
         
-        text = text ? "TTCAMTOKENTT " + text : "TTCAMTOKENTT";
-        
-        state.cameraStream.getTracks().forEach(track => track.stop());
-        state.cameraStream = null;
+        state.camera_stream.getTracks().forEach(track => track.stop());
+        state.camera_stream = null;
         dom.webcamPreview.style.display = 'none';
         dom.webcamPreview.srcObject = null;
     }
-
-    if (!text && !state.current_image_base64 && !isCameraActive) return;
     
     dom.queryInput.value = '';
-    appendMessage('user', text || "[Image Attached]");
+    appendMessage('user', uiText || "[Image Attached]");
 
     const payload = {
         message: text || "Analyze this image",
-        session_id: state.session_id
+        session_id: state.session_id,
+        ttsEnabled: state.ttsEnabled
     };
 
     let endpoint = '/api/chat';
     
-    if (isCameraActive) {
-        endpoint = '/api/vision';
-        payload.image = cameraBase64;
-    } else if (state.current_image_base64) {
+    if (state.current_image_base64) {
         endpoint = '/api/vision';
         // The API schema uses `image: str` for the base64 string
         const base64Data = state.current_image_base64.split(',')[1] || state.current_image_base64;
@@ -157,6 +165,9 @@ async function executeCommand() {
         if (res.ok) {
             const data = await res.json();
             appendMessage('system', data.response);
+            if (data.audio_url) {
+                new Audio(data.audio_url).play();
+            }
         } else {
             appendMessage('system', "Error: Could not reach backend.");
         }

@@ -20,6 +20,15 @@ class MemoryService:
         self.knowledge_library_dir = Path("knowledge_library")
         self.knowledge_library_dir.mkdir(parents=True, exist_ok=True)
 
+    def extract_document_text(self, filename: str, raw_bytes: bytes) -> str:
+        if filename.lower().endswith(('.txt', '.md', '.json')):
+            try:
+                extracted_text = raw_bytes.decode('utf-8').strip()
+                return f"--- Uploaded Document Context [{filename}] ---\n{extracted_text}\n---"
+            except Exception:
+                pass
+        return ""
+
     def load_knowledge_library(self, category: str) -> str:
         """
         Recursively reads all .txt, .md, or code files inside knowledge_library/{category}.

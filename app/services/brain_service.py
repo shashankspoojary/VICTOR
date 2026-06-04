@@ -2,6 +2,8 @@ import json
 import logging
 from app.services.ai_service import AIService
 from app.services.memory_service import MemoryService
+from app.services.personality_service import PersonalityService
+from app.services.realtime_service import RealtimeService
 
 logger = logging.getLogger(__name__)
 
@@ -9,6 +11,8 @@ class BrainService:
     def __init__(self):
         self.ai_service = AIService()
         self.memory_service = MemoryService()
+        self.personality_service = PersonalityService()
+        self.realtime_service = RealtimeService()
 
     def check_deterministic_guards(self, query: str) -> dict | None:
         """
@@ -88,3 +92,52 @@ Example Expected Output:
                 "capability": "chat",
                 "mode": "VICTOR_MODE"
             }
+
+    async def execute_query(self, session_id: str, query: str) -> str:
+        """
+        The Master Interaction Loop.
+        Routes the intent, builds context, triggers capabilities like research if needed,
+        generates the AI response, logs history, and returns the response.
+        """
+        # Step A: Run route_intent
+        route = await self.route_intent(session_id, query)
+        capability = route.get("capability")
+        mode = route.get("mode")
+
+        # Step B: Fetch the structural background context
+        context_data = self.memory_service.build_context(session_id, query)
+        base_context = context_data.get("system_prompt", "")
+        chat_history = context_data.get("chat_history", [])
+
+        # Step C: Realtime search if appropriate
+        research_context = ""
+        if capability == "research" or mode == "RESEARCH_MODE":
+            try:
+                search_results = await self.realtime_service.search_web(query)
+                research_context = f"\n\n--- Internet Research Context ---\n{search_results}"
+            except Exception as e:
+                logger.error(f"Realtime search failed: {e}")
+
+        # Step D: Combine into single master system prompt payload
+        master_system_prompt = self.personality_service.get_behavior_prompt(base_context)
+        if research_context:
+            master_system_prompt += research_context
+            
+        if chat_history:
+            history_str = "\n\n--- Chat History ---\n"
+            for msg in chat_history[-5:]:
+                history_str += f"{msg['role'].capitalize()}: {msg['content']}\n"
+            master_system_prompt += history_str
+
+        # Log user query into history
+        self.memory_service.add_message(session_id, "user", query)
+
+        # Step E: Hand payload and original query to AIService
+        response_text = await self.ai_service.generate_text(
+            prompt=query,
+            system_prompt=master_system_prompt
+        )
+
+        # Step F: Log assistant's final response and return
+        self.memory_service.add_message(session_id, "assistant", response_text)
+        return response_text

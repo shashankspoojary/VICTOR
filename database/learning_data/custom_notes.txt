@@ -1,1 +1,1 @@
- 
+Notes: Prefer flat-file memory over vector databases.

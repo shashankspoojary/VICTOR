@@ -1,0 +1,90 @@
+import json
+import logging
+from app.services.ai_service import AIService
+from app.services.memory_service import MemoryService
+
+logger = logging.getLogger(__name__)
+
+class BrainService:
+    def __init__(self):
+        self.ai_service = AIService()
+        self.memory_service = MemoryService()
+
+    def check_deterministic_guards(self, query: str) -> dict | None:
+        """
+        Checks the user query against deterministic guards.
+        Returns a pre-configured routing packet if a guard matches, otherwise None.
+        """
+        if 'TTCAMTOKENTT' in query:
+            return {
+                "capability": "vision",
+                "mode": "VICTOR_MODE",
+                "bypass_classifier": True,
+                "cleaned_query": query.replace('TTCAMTOKENTT', '').strip()
+            }
+        return None
+
+    async def route_intent(self, session_id: str, query: str) -> dict:
+        """
+        Routes the user's intent to the appropriate capability and mode via AI classifier.
+        Falls back to a default configuration safely if processing fails.
+        """
+        # 1. Check deterministic guards first
+        guard_result = self.check_deterministic_guards(query)
+        if guard_result:
+            return guard_result
+
+        # 2. Fetch compiled background payload
+        context = self.memory_service.build_context(session_id, query)
+        
+        # 3. Prepare highly optimized routing system prompt
+        routing_system_prompt = f"""You are the Cognitive Routing Brain for VICTOR.
+Your sole purpose is to analyze the user's query and determine the best capability and mode to handle it.
+You MUST respond with RAW JSON ONLY containing exactly two keys: "capability" and "mode". No other text or markdown blocks.
+
+Available Capabilities:
+- chat: For general conversation, greeting, answering basic or abstract questions.
+- research: For looking up current events, facts, or performing web searches.
+- coding: For writing, explaining, modifying, or reviewing programming code.
+- script_writing: For generating long-form texts, stories, or scripts.
+- vision: For analyzing visual input or images.
+- task: For executing system tasks or background processes.
+
+Available Modes:
+- VICTOR_MODE: Standard tactical, concise, AI assistant mode.
+- KNOWLEDGE_MODE: For deep, informative, detailed explanations.
+- RESEARCH_MODE: For browsing/researching external information.
+
+Context / Background Payload:
+{context.get('system_prompt', '')}
+
+Example Expected Output:
+{{"capability": "chat", "mode": "VICTOR_MODE"}}
+"""
+
+        # 4. Call AIService to get the classification
+        try:
+            response_text = await self.ai_service.generate_text(
+                prompt=query,
+                system_prompt=routing_system_prompt
+            )
+            
+            # Clean up the response safely
+            clean_text = response_text.replace("```json", "").replace("```", "").strip()
+            result = json.loads(clean_text)
+            
+            capability = result.get("capability", "chat")
+            mode = result.get("mode", "VICTOR_MODE")
+            
+            return {
+                "capability": capability,
+                "mode": mode
+            }
+            
+        except Exception as e:
+            logger.error(f"Intent routing failed: {e}. Defaulting to safe fallback.")
+            # 5. Default gracefully if parsing or generation fails
+            return {
+                "capability": "chat",
+                "mode": "VICTOR_MODE"
+            }

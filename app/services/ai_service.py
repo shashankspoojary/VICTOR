@@ -1,8 +1,10 @@
 import logging
 import re
 import os
+import base64
 from typing import Optional
 import edge_tts
+import httpx
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -61,10 +63,36 @@ class AIService:
         clean_text = re.sub(r'[*#_~`]', '', text)
         communicate = edge_tts.Communicate(clean_text, voice=config.TTS_VOICE, rate=config.TTS_RATE)
         
-        output_dir = "workspace/temp"
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = f"{output_dir}/speech_{session_id}.mp3"
+        audio_bytes = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_bytes += chunk["data"]
+                
+        base64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+        return f"data:audio/mp3;base64,{base64_audio}"
+
+    @async_retry(retries=3, initial_delay=1.0, backoff_factor=2.0, key_manager=llm_key_manager)
+    async def transcribe_audio(self, audio_bytes: bytes, filename: str = "audio.wav") -> str:
+        current_key = llm_key_manager.get_current_key()
+        if not current_key:
+            raise ValueError("No active LLM API key available.")
+            
+        logger.info(f"Transcribing audio with model whisper-large-v3 (key rotation active)")
         
-        await communicate.save(output_path)
+        url = "https://api.groq.com/openai/v1/audio/transcriptions"
+        headers = {
+            "Authorization": f"Bearer {current_key}"
+        }
         
-        return f"/static_workspace/temp/speech_{session_id}.mp3"
+        files = {
+            "file": (filename, audio_bytes, "audio/wav")
+        }
+        data = {
+            "model": "whisper-large-v3"
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, files=files, data=data)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("text", "").strip()

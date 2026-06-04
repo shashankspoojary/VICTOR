@@ -266,3 +266,6 @@ body {
 .execute-btn:active {
     transform: translateY(0);
 }
+
+.drag-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(124, 106, 239, 0.07); border: 3px dashed #7c6aef; z-index: 9999; pointer-events: none; display: none; }
+body.drag-active .drag-overlay { display: block; }

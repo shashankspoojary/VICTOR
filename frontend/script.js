@@ -4,8 +4,20 @@ const state = {
     mode: "VICTOR",
     camera_stream: null,
     ttsEnabled: true,
-    voiceEnabled: false
+    voiceEnabled: false,
+    mediaStream: null,
+    silenceTimeout: null,
+    isSpeaking: false
 };
+
+const SILENCE_THRESHOLD = 15;
+const SILENCE_DURATION = 1500;
+
+let mediaRecorder = null;
+let audioChunks = [];
+let audioContext = null;
+let analyser = null;
+let monitorInterval = null;
 
 const dom = {
     statusIndicator: document.getElementById('status-indicator'),
@@ -57,9 +69,8 @@ dom.modeBtns.forEach(btn => {
     });
 });
 
-dom.imageInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
+function handleFileInput(file) {
+    if (file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onload = (event) => {
             state.current_image_base64 = event.target.result;
@@ -67,6 +78,26 @@ dom.imageInput.addEventListener('change', (e) => {
             dom.imagePreviewPane.classList.remove('hidden');
         };
         reader.readAsDataURL(file);
+    } else {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('session_id', state.session_id);
+        fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+        }).then(res => res.json()).then(data => {
+            appendMessage('system', data.response || data.message || 'Document uploaded successfully.');
+        }).catch(err => {
+            console.error(err);
+            appendMessage('system', 'Error uploading document.');
+        });
+    }
+}
+
+dom.imageInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        handleFileInput(file);
     }
 });
 
@@ -100,10 +131,149 @@ dom.ttsToggleBtn.addEventListener('click', () => {
     dom.ttsToggleBtn.classList.toggle('active');
 });
 
-dom.voiceToggleBtn.addEventListener('click', () => {
+dom.voiceToggleBtn.addEventListener('click', async () => {
     state.voiceEnabled = !state.voiceEnabled;
     dom.voiceToggleBtn.classList.toggle('active');
+
+    if (state.voiceEnabled) {
+        startListeningLoop();
+    } else {
+        stopVoiceCapture();
+    }
 });
+
+async function startListeningLoop() {
+    try {
+        state.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        const microphone = audioContext.createMediaStreamSource(state.mediaStream);
+        microphone.connect(analyser);
+
+        mediaRecorder = new MediaRecorder(state.mediaStream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) {
+                audioChunks.push(e.data);
+            }
+        };
+
+        mediaRecorder.start();
+        monitorVolume();
+    } catch (err) {
+        console.error('Error accessing microphone:', err);
+        state.voiceEnabled = false;
+        dom.voiceToggleBtn.classList.remove('active');
+    }
+}
+
+function stopVoiceCapture() {
+    if (state.silenceTimeout) {
+        clearTimeout(state.silenceTimeout);
+        state.silenceTimeout = null;
+    }
+    if (monitorInterval) {
+        cancelAnimationFrame(monitorInterval);
+        monitorInterval = null;
+    }
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+    }
+    if (state.mediaStream) {
+        state.mediaStream.getTracks().forEach(track => track.stop());
+        state.mediaStream = null;
+    }
+    if (audioContext && audioContext.state !== 'closed') {
+        audioContext.close();
+        audioContext = null;
+    }
+    state.isSpeaking = false;
+}
+
+function monitorVolume() {
+    if (!analyser || !state.voiceEnabled) return;
+    
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArray);
+    
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
+    }
+    const average = sum / dataArray.length;
+    
+    if (average > SILENCE_THRESHOLD) {
+        state.isSpeaking = true;
+        if (state.silenceTimeout) {
+            clearTimeout(state.silenceTimeout);
+            state.silenceTimeout = null;
+        }
+    } else {
+        if (state.isSpeaking && !state.silenceTimeout) {
+            state.silenceTimeout = setTimeout(() => {
+                stopAndProcessAudioSegment();
+            }, SILENCE_DURATION);
+        }
+    }
+    
+    monitorInterval = requestAnimationFrame(monitorVolume);
+}
+
+function stopAndProcessAudioSegment() {
+    state.isSpeaking = false;
+    if (state.silenceTimeout) {
+        clearTimeout(state.silenceTimeout);
+        state.silenceTimeout = null;
+    }
+    if (monitorInterval) {
+        cancelAnimationFrame(monitorInterval);
+        monitorInterval = null;
+    }
+
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            audioChunks = [];
+            
+            if (state.mediaStream) {
+                state.mediaStream.getTracks().forEach(track => track.stop());
+                state.mediaStream = null;
+            }
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close();
+                audioContext = null;
+            }
+
+            const formData = new FormData();
+            formData.append('file', audioBlob, 'audio.wav');
+            
+            try {
+                const res = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.transcript && data.transcript.trim() !== '') {
+                        dom.queryInput.value = data.transcript;
+                        executeCommand();
+                    } else {
+                        if (state.voiceEnabled) startListeningLoop();
+                    }
+                } else {
+                    console.error('Transcription failed:', await res.text());
+                    if (state.voiceEnabled) startListeningLoop();
+                }
+            } catch (err) {
+                console.error('Error sending audio for transcription:', err);
+                if (state.voiceEnabled) startListeningLoop();
+            }
+        };
+        mediaRecorder.stop();
+    }
+}
 
 async function executeCommand() {
     let text = dom.queryInput.value.trim();
@@ -166,13 +336,25 @@ async function executeCommand() {
             const data = await res.json();
             appendMessage('system', data.response);
             if (data.audio_url) {
-                new Audio(data.audio_url).play();
+                const responseVoice = new Audio(data.audio_url);
+                responseVoice.onended = () => {
+                    if (state.voiceEnabled) {
+                        startListeningLoop(); // Seamlessly resume listening for the next command!
+                    }
+                };
+                responseVoice.play();
+            } else {
+                if (state.voiceEnabled) {
+                    startListeningLoop();
+                }
             }
         } else {
             appendMessage('system', "Error: Could not reach backend.");
+            if (state.voiceEnabled) startListeningLoop();
         }
     } catch (e) {
         appendMessage('system', "Error: Request failed.");
+        if (state.voiceEnabled) startListeningLoop();
     }
 }
 
@@ -180,6 +362,32 @@ dom.executeBtn.addEventListener('click', executeCommand);
 dom.queryInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
         executeCommand();
+    }
+});
+
+// Drag and Drop Overlay
+const overlay = document.createElement('div');
+overlay.className = 'drag-overlay';
+document.body.appendChild(overlay);
+
+['dragenter', 'dragover'].forEach(eventName => {
+    document.addEventListener(eventName, e => {
+        e.preventDefault();
+        document.body.classList.add('drag-active');
+    }, false);
+});
+
+['dragleave', 'drop'].forEach(eventName => {
+    document.addEventListener(eventName, e => {
+        e.preventDefault();
+        document.body.classList.remove('drag-active');
+    }, false);
+});
+
+document.addEventListener('drop', e => {
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        handleFileInput(files[0]);
     }
 });
 

@@ -75,6 +75,13 @@ async def vision_endpoint(payload: VisionRequest):
     )
     return {"response": response}
 
+@app.post("/api/transcribe")
+async def transcribe_endpoint(file: UploadFile = File(...)):
+    audio_content = await file.read()
+    ai_service = AIService()
+    text = await ai_service.transcribe_audio(audio_content, file.filename)
+    return {"transcript": text}
+
 @app.post("/api/upload")
 async def upload_document(file: UploadFile = File(...), session_id: str = Form(...)):
     raw_bytes = await file.read()

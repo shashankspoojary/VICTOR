@@ -58,12 +58,10 @@ def main():
     # Success message
     console.print("[bold green]✓ VICTOR Core System Initialized Successfully[/bold green]\n")
     
-    # Start the server (placeholder block for uvicorn)
-    console.print("[bold yellow]Booting Uvicorn server... (Placeholder)[/bold yellow]")
-    
-    # Placeholder: uvicorn will eventually boot app.main:app
-    # import uvicorn
-    # uvicorn.run("app.main:app", host=config.HOST, port=config.PORT, reload=True)
+    # Start the server
+    console.print("[bold green]Booting Uvicorn server...[/bold green]")
+    import uvicorn
+    uvicorn.run("app.main:app", host=config.HOST, port=config.PORT, reload=True)
 
 if __name__ == "__main__":
     main()

@@ -39,14 +39,47 @@ async def stream_endpoint(prompt: str):
                 task_msg = json.dumps({"type": "task", "status": "running", "plan": plan.execution_plan})
                 yield f"data: {task_msg}\n\n"
                 
-                # Execute tasks in background
-                asyncio.create_task(task_executor.execute_plan(plan.execution_plan))
+                event_queue = asyncio.Queue()
                 
                 # Stream conversational acknowledgment token-by-token
                 messages = [
                     {"role": "system", "content": f"You are {config.ASSISTANT_NAME}. Acknowledge the user's request and state you are executing the tasks. Keep it very short, tactical, and professional."},
                     {"role": "user", "content": prompt}
                 ]
+                
+                ai_stream = ai_service.stream_chat_completion(messages)
+                
+                async def consume_ai_stream():
+                    try:
+                        async for chunk in ai_stream:
+                            await event_queue.put({"type": "token", "text": chunk})
+                    except Exception as e:
+                        await event_queue.put({"type": "error", "text": str(e)})
+                    finally:
+                        await event_queue.put({"type": "_ai_done"})
+
+                async def execute_tasks():
+                    try:
+                        await task_executor.execute_plan(plan.execution_plan, event_queue)
+                    except Exception as e:
+                        await event_queue.put({"type": "error", "text": str(e)})
+                    finally:
+                        await event_queue.put({"type": "_exec_done"})
+
+                asyncio.create_task(consume_ai_stream())
+                asyncio.create_task(execute_tasks())
+                
+                ai_done = False
+                exec_done = False
+                
+                while not (ai_done and exec_done):
+                    item = await event_queue.get()
+                    if item["type"] == "_ai_done":
+                        ai_done = True
+                    elif item["type"] == "_exec_done":
+                        exec_done = True
+                    else:
+                        yield f"data: {json.dumps(item)}\n\n"
             else:
                 # Regular chat
                 messages = [
@@ -54,8 +87,8 @@ async def stream_endpoint(prompt: str):
                     {"role": "user", "content": prompt}
                 ]
 
-            async for chunk in ai_service.stream_chat_completion(messages):
-                yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+                async for chunk in ai_service.stream_chat_completion(messages):
+                    yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
                 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"

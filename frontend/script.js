@@ -77,10 +77,11 @@ function addTaskToWidget(plan) {
     plan.forEach((step, index) => {
         const taskDiv = document.createElement('div');
         taskDiv.className = 'task-item';
+        taskDiv.setAttribute('data-step', step);
         
         const statusDiv = document.createElement('div');
         statusDiv.className = 'status';
-        statusDiv.textContent = 'EXECUTING';
+        statusDiv.textContent = 'PENDING';
         
         const contentDiv = document.createElement('div');
         contentDiv.textContent = step;
@@ -88,13 +89,7 @@ function addTaskToWidget(plan) {
         taskDiv.appendChild(statusDiv);
         taskDiv.appendChild(contentDiv);
         
-        taskList.prepend(taskDiv);
-        
-        // Mock task completion cascading delay based on index
-        setTimeout(() => {
-            taskDiv.classList.add('completed');
-            statusDiv.textContent = 'COMPLETED';
-        }, 3000 + (index * 2000));
+        taskList.appendChild(taskDiv);
     });
 }
 
@@ -128,6 +123,28 @@ function sendMessage() {
             } 
             else if (data.type === 'task') {
                 addTaskToWidget(data.plan);
+            }
+            else if (data.type === 'task_status') {
+                const items = taskList.querySelectorAll('.task-item');
+                let targetItem = null;
+                for (let item of items) {
+                    if (item.getAttribute('data-step') === data.step) {
+                        targetItem = item;
+                        break;
+                    }
+                }
+                
+                if (targetItem) {
+                    const statusDiv = targetItem.querySelector('.status');
+                    if (data.status === 'running') {
+                        targetItem.classList.add('running');
+                        statusDiv.textContent = 'RUNNING';
+                    } else if (data.status === 'completed') {
+                        targetItem.classList.remove('running');
+                        targetItem.classList.add('completed');
+                        statusDiv.textContent = 'COMPLETED';
+                    }
+                }
             }
             else if (data.type === 'done') {
                 eventSource.close();

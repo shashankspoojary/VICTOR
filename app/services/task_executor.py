@@ -1,3 +1,4 @@
+import asyncio
 import json
 import webbrowser
 import re
@@ -9,12 +10,16 @@ from app.services.realtime_service import realtime_service
 console = Console()
 
 class TaskExecutor:
-    async def execute_plan(self, plan: List[str]):
+    async def execute_plan(self, plan: List[str], event_queue: asyncio.Queue = None):
         for step in plan:
+            if event_queue:
+                await event_queue.put({"type": "task_status", "step": step, "status": "running"})
             console.print(f"\n[cyan]Executing step:[/cyan] {step}")
             primitive = await self._translate_step(step)
             if primitive:
-                await self._handle_primitive(primitive)
+                await self._handle_primitive(primitive, event_queue)
+            if event_queue:
+                await event_queue.put({"type": "task_status", "step": step, "status": "completed"})
 
     async def _translate_step(self, step: str) -> dict:
         prompt = (
@@ -45,7 +50,7 @@ class TaskExecutor:
             console.print(f"[red]Error translating step: {e}[/red]")
             return None
 
-    async def _handle_primitive(self, primitive: dict):
+    async def _handle_primitive(self, primitive: dict, event_queue: asyncio.Queue = None):
         action = primitive.get("action")
         param = primitive.get("param")
         
@@ -68,6 +73,8 @@ class TaskExecutor:
             console.print(f"[magenta]Researching:[/magenta] {param}")
             results = await realtime_service.search(param)
             console.print(f"[blue]Research Results for '{param}':[/blue]\n{results}")
+            if event_queue:
+                await event_queue.put({"type": "token", "text": f"\n\n[Research Results]:\n{results}"})
         else:
             console.print(f"[red]Unknown action:[/red] {action}")
 

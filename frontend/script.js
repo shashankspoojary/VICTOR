@@ -1,0 +1,167 @@
+// WebGL Orb Initialization
+const canvas = document.getElementById('webgl-orb');
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
+camera.position.z = 5;
+
+const geometry = new THREE.IcosahedronGeometry(1.5, 2);
+const material = new THREE.MeshStandardMaterial({ 
+    color: 0x7c6aef, 
+    wireframe: true, 
+    transparent: true,
+    opacity: 0.6
+});
+const sphere = new THREE.Mesh(geometry, material);
+scene.add(sphere);
+
+const light = new THREE.PointLight(0xffffff, 1, 100);
+light.position.set(10, 10, 10);
+scene.add(light);
+
+function animateOrb() {
+    requestAnimationFrame(animateOrb);
+    sphere.rotation.x += 0.003;
+    sphere.rotation.y += 0.003;
+    renderer.render(scene, camera);
+}
+
+function resizeOrb() {
+    const container = canvas.parentElement;
+    camera.aspect = container.clientWidth / container.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight, false);
+}
+
+window.addEventListener('resize', resizeOrb);
+resizeOrb();
+animateOrb();
+
+// Streaming Logic
+const chatInput = document.getElementById('chat-input');
+const sendBtn = document.getElementById('send-btn');
+const chatHistory = document.getElementById('chat-history');
+const taskList = document.getElementById('task-list');
+
+let currentSystemMessageText = null;
+
+function appendMessage(role, text) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${role}-msg`;
+    
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'system' ? 'V' : 'U';
+    
+    const textDiv = document.createElement('div');
+    textDiv.className = 'text';
+    textDiv.textContent = text;
+    
+    msgDiv.appendChild(avatar);
+    msgDiv.appendChild(textDiv);
+    chatHistory.appendChild(msgDiv);
+    
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+    
+    if (role === 'system') {
+        currentSystemMessageText = textDiv;
+    }
+}
+
+function addTaskToWidget(plan) {
+    const placeholder = taskList.querySelector('.task-placeholder');
+    if (placeholder) {
+        placeholder.remove();
+    }
+    
+    plan.forEach((step, index) => {
+        const taskDiv = document.createElement('div');
+        taskDiv.className = 'task-item';
+        
+        const statusDiv = document.createElement('div');
+        statusDiv.className = 'status';
+        statusDiv.textContent = 'EXECUTING';
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.textContent = step;
+        
+        taskDiv.appendChild(statusDiv);
+        taskDiv.appendChild(contentDiv);
+        
+        taskList.prepend(taskDiv);
+        
+        // Mock task completion cascading delay based on index
+        setTimeout(() => {
+            taskDiv.classList.add('completed');
+            statusDiv.textContent = 'COMPLETED';
+        }, 3000 + (index * 2000));
+    });
+}
+
+function sendMessage() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    
+    chatInput.value = '';
+    appendMessage('user', text);
+    currentSystemMessageText = null;
+    
+    // Animate the orb faster when thinking
+    sphere.material.opacity = 0.9;
+    sphere.material.color.setHex(0x9d8df0);
+    let fastSpin = setInterval(() => {
+        sphere.rotation.y += 0.02;
+    }, 16);
+    
+    const eventSource = new EventSource(`/api/stream?prompt=${encodeURIComponent(text)}`);
+    
+    eventSource.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'token') {
+                if (!currentSystemMessageText) {
+                    appendMessage('system', '');
+                }
+                currentSystemMessageText.textContent += data.text;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            } 
+            else if (data.type === 'task') {
+                addTaskToWidget(data.plan);
+            }
+            else if (data.type === 'done') {
+                eventSource.close();
+                clearInterval(fastSpin);
+                sphere.material.opacity = 0.6;
+                sphere.material.color.setHex(0x7c6aef);
+            }
+            else if (data.type === 'error') {
+                if (!currentSystemMessageText) appendMessage('system', '');
+                currentSystemMessageText.textContent += `\n[Error: ${data.text}]`;
+                currentSystemMessageText.style.color = '#ef4444';
+                eventSource.close();
+                clearInterval(fastSpin);
+                sphere.material.opacity = 0.6;
+                sphere.material.color.setHex(0x7c6aef);
+            }
+        } catch (e) {
+            console.error("Error parsing SSE data", e);
+        }
+    };
+    
+    eventSource.onerror = function() {
+        console.error("EventSource failed");
+        eventSource.close();
+        clearInterval(fastSpin);
+        sphere.material.opacity = 0.6;
+        sphere.material.color.setHex(0x7c6aef);
+        if (!currentSystemMessageText) appendMessage('system', 'Connection to Brain Service lost.');
+    };
+}
+
+sendBtn.addEventListener('click', sendMessage);
+chatInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        sendMessage();
+    }
+});

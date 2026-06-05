@@ -1,0 +1,74 @@
+import json
+import webbrowser
+import re
+from typing import List
+from rich.console import Console
+from app.services.ai_service import ai_service
+from app.services.realtime_service import realtime_service
+
+console = Console()
+
+class TaskExecutor:
+    async def execute_plan(self, plan: List[str]):
+        for step in plan:
+            console.print(f"\n[cyan]Executing step:[/cyan] {step}")
+            primitive = await self._translate_step(step)
+            if primitive:
+                await self._handle_primitive(primitive)
+
+    async def _translate_step(self, step: str) -> dict:
+        prompt = (
+            f"Translate the following step into a strict execution primitive.\n"
+            f"Supported primitives:\n"
+            f"- {{\"action\": \"open_url\", \"param\": \"URL_STRING\"}}\n"
+            f"- {{\"action\": \"research\", \"param\": \"SEARCH_QUERY\"}}\n"
+            f"- {{\"action\": \"play_youtube\", \"param\": \"SEARCH_QUERY\"}}\n\n"
+            f"CRITICAL INSTRUCTION: If the task text explicitly requests to 'play' music, a song, or a video on YouTube, select the 'play_youtube' action instead of a standard 'open_url' search page.\n"
+            f"Look at the consolidated step text. If it just says 'on YouTube' but not 'play', it must output:\n"
+            f"{{\"action\": \"open_url\", \"param\": \"https://www.youtube.com/results?search_query=lo-fi+beats\"}}\n"
+            f"If a step does not mention a specific browser platform (e.g., 'Look up current news on space exploration'), it must be routed as a background intelligence action:\n"
+            f"{{\"action\": \"research\", \"param\": \"current news on space exploration\"}}\n\n"
+            f"Step: {step}\n\n"
+            f"Output ONLY valid JSON. Your response must be a single JSON object."
+        )
+        messages = [{"role": "user", "content": prompt}]
+        response_format = {"type": "json_object"}
+        
+        try:
+            result = await ai_service.get_chat_completion(
+                messages=messages, 
+                response_format=response_format,
+                temperature=0.1
+            )
+            return json.loads(result)
+        except Exception as e:
+            console.print(f"[red]Error translating step: {e}[/red]")
+            return None
+
+    async def _handle_primitive(self, primitive: dict):
+        action = primitive.get("action")
+        param = primitive.get("param")
+        
+        if action == "open_url":
+            console.print(f"[green]Opening URL:[/green] {param}")
+            webbrowser.open(param)
+        elif action == "play_youtube":
+            console.print(f"[magenta]Playing on YouTube:[/magenta] {param}")
+            results = await realtime_service.search(f"site:youtube.com watch {param}")
+            match = re.search(r'(https://www\.youtube\.com/watch\?v=[\w-]+)', str(results))
+            if match:
+                target_video_url = match.group(1)
+                console.print(f"[green]Direct video link found:[/green] {target_video_url}")
+                webbrowser.open(target_video_url)
+            else:
+                fallback_url = f"https://www.youtube.com/results?search_query={param.replace(' ', '+')}"
+                console.print(f"[yellow]No direct link found, falling back to search:[/yellow] {fallback_url}")
+                webbrowser.open(fallback_url)
+        elif action == "research":
+            console.print(f"[magenta]Researching:[/magenta] {param}")
+            results = await realtime_service.search(param)
+            console.print(f"[blue]Research Results for '{param}':[/blue]\n{results}")
+        else:
+            console.print(f"[red]Unknown action:[/red] {action}")
+
+task_executor = TaskExecutor()

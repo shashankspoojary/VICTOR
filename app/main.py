@@ -15,6 +15,7 @@ import config
 from app.services.brain_service import brain_service
 from app.services.task_executor import task_executor
 from app.services.ai_service import ai_service
+from app.services.memory_service import memory_service
 
 app = FastAPI(title="VICTOR Premium Web Server")
 
@@ -54,9 +55,11 @@ async def stream_endpoint(prompt: str):
                 
                 ai_stream = ai_service.stream_chat_completion(messages)
                 
+                full_response_parts = []
                 async def consume_ai_stream():
                     try:
                         async for chunk in ai_stream:
+                            full_response_parts.append(chunk)
                             await event_queue.put({"type": "token", "text": chunk})
                     except Exception as e:
                         await event_queue.put({"type": "error", "text": str(e)})
@@ -85,6 +88,9 @@ async def stream_endpoint(prompt: str):
                         exec_done = True
                     else:
                         yield f"data: {json.dumps(item)}\n\n"
+                        
+                full_response = "".join(full_response_parts)
+                await memory_service.save_interaction("default", prompt, full_response)
             else:
                 # Regular chat
                 messages = [
@@ -92,8 +98,13 @@ async def stream_endpoint(prompt: str):
                     {"role": "user", "content": prompt}
                 ]
 
+                full_response_parts = []
                 async for chunk in ai_service.stream_chat_completion(messages):
+                    full_response_parts.append(chunk)
                     yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+                    
+                full_response = "".join(full_response_parts)
+                await memory_service.save_interaction("default", prompt, full_response)
                 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"

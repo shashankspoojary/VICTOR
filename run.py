@@ -11,7 +11,7 @@ def check_env_variables():
     required_keys = [
         "PORT", "HOST",
         "GROQ_API_KEY1", "GROQ_API_KEY2", "GROQ_API_KEY3",
-        "TAVILY_API_KEY_1", "TAVILY_API_KEY_2", "TAVILY_API_KEY_3",
+        "TAVILY_API_KEY", "TAVILY_API_KEY_2", "TAVILY_API_KEY_3",
         "GROQ_VLM_API_KEY_1", "GROQ_VLM_API_KEY_2", "GROQ_VLM_API_KEY_3",
         "GROQ_MODEL", "GROQ_VLM_MODEL",
         "TTS_VOICE", "TTS_RATE",

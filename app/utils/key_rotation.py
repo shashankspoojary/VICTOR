@@ -32,7 +32,7 @@ groq_rotator = KeyRotator("Groq", [
 ])
 
 tavily_rotator = KeyRotator("Tavily", [
-    config.TAVILY_API_KEY_1, 
+    config.TAVILY_API_KEY, 
     config.TAVILY_API_KEY_2, 
     config.TAVILY_API_KEY_3
 ])

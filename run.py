@@ -59,7 +59,7 @@ def main():
     console.print("[bold green]✓ VICTOR Core System Initialized Successfully[/bold green]\n")
     
     # Start the server
-    console.print("[bold green]Booting Uvicorn server...[/bold green]")
+    console.print(f"[bold green]Dashboard is live at http://{config.HOST}:{config.PORT}[/bold green]")
     import uvicorn
     uvicorn.run("app.main:app", host=config.HOST, port=config.PORT, reload=True)
 

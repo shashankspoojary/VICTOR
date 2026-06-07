@@ -84,29 +84,15 @@ async def stream_endpoint(req: ChatRequest):
             yield "data: " + json.dumps({"activity": {"event": "request_received", "message": "Processing request..."}}) + "\n\n"
 
             if "TTCAMTOKENTT" in prompt:
+                # Clear token marker and isolate prompt text
                 clean_prompt = prompt.replace("TTCAMTOKENTT", "").strip()
-                upload_dir = config.DIRS["workspace_uploads"]
-                files = [f for f in upload_dir.iterdir() if f.is_file()]
-                if not files:
-                    yield "data: " + json.dumps({'error': 'No image found for vision analysis.'}) + "\n\n"
-                    yield "data: " + json.dumps({"done": True}) + "\n\n"
+                file_path = os.path.join(config.DIRS["workspace_uploads"], "webcam.jpg")
+                if os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        img_bytes = f.read()
+                    analysis = await vision_service.analyze_image(img_bytes, clean_prompt)
+                    yield f"data: {json.dumps({'type': 'token', 'text': analysis})}\n\n"
                     return
-                
-                most_recent_file = max(files, key=lambda f: f.stat().st_mtime)
-                with open(most_recent_file, "rb") as f:
-                    image_bytes = f.read()
-                
-                analysis = await vision_service.analyze_image(image_bytes, clean_prompt)
-                
-                yield "data: " + json.dumps({"chunk": analysis}) + "\n\n"
-                
-                if use_tts:
-                    audio_b64 = await synthesize_speech_to_b64(analysis)
-                    if audio_b64:
-                        yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
-
-                yield "data: " + json.dumps({"done": True}) + "\n\n"
-                return
 
             # 0. Retrieve conversational context
             context = await memory_service.get_context(session_id=session_id)
@@ -122,7 +108,7 @@ async def stream_endpoint(req: ChatRequest):
                 
                 # Stream conversational acknowledgment token-by-token
                 messages = [
-                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}. Acknowledge the user's request and state you are executing the tasks. Keep it very short, tactical, and professional.\n\n{context}"},
+                    {"role": "system", "content": "You are VICTOR. Acknowledge the user's research/task request and state concisely that search or execution protocols are running. CRITICAL: Do NOT attempt to answer the user's question, offer data points, or guess values yourself. Keep it strictly limited to a professional system confirmation."},
                     {"role": "user", "content": prompt}
                 ]
                 
@@ -231,12 +217,10 @@ async def stream_endpoint(req: ChatRequest):
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    upload_dir = config.DIRS["workspace_uploads"]
-    file_path = upload_dir / file.filename
-    content = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
-    return {"filename": file.filename, "status": "saved"}
+    file_path = os.path.join(config.DIRS["workspace_uploads"], "webcam.jpg")
+    with open(file_path, "wb") as buffer:
+        buffer.write(await file.read())
+    return {"status": "success", "filename": "webcam.jpg"}
 
 @app.post("/api/tts")
 async def tts_endpoint(req: TTSRequest):

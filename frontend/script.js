@@ -1477,10 +1477,9 @@ function autoResizeInput() {
 
 function updatePanelOverlay() {
     if (!panelOverlay) return;
-    const anyOpen = (activityPanel && activityPanel.classList.contains('open')) ||
-        (searchResultsWidget && searchResultsWidget.classList.contains('open')) ||
-        (settingsPanel && settingsPanel.classList.contains('open'));
-    panelOverlay.classList.toggle('visible', !!anyOpen);
+    // Only engage the screen blocking mask for the centered configuration settings modal
+    const modalOpen = (settingsPanel && settingsPanel.classList.contains('open'));
+    panelOverlay.classList.toggle('visible', !!modalOpen);
 }
 
 function setMode(mode) {

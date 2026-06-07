@@ -49,6 +49,9 @@ async def health_endpoint():
 async def get_task(task_id: str):
     return BACKGROUND_TASKS.get(task_id, {"status": "not_found"})
 
+class ChatPayload(BaseModel):
+    prompt: str
+
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default"
@@ -73,11 +76,9 @@ async def synthesize_speech_to_b64(text: str) -> Optional[str]:
         print(f"TTS Error: {e}")
     return None
 
-@app.post("/chat/victor/stream")
-async def stream_endpoint(req: ChatRequest):
-    prompt = req.message
-    session_id = req.session_id or "default"
-    use_tts = req.tts
+@app.get("/api/stream")
+async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default", tts: Optional[bool] = False):
+    use_tts = tts
 
     async def event_generator():
         try:
@@ -215,6 +216,148 @@ async def stream_endpoint(req: ChatRequest):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+@app.post("/chat/victor/stream")
+async def post_stream_endpoint(payload: ChatPayload):
+    prompt = payload.prompt
+    session_id = "default"
+    use_tts = False
+
+    async def event_generator():
+        try:
+            yield "data: " + json.dumps({"activity": {"event": "request_received", "message": "Processing request..."}}) + "\n\n"
+
+            if "TTCAMTOKENTT" in prompt:
+                # Clear token marker and isolate prompt text
+                clean_prompt = prompt.replace("TTCAMTOKENTT", "").strip()
+                file_path = os.path.join(config.DIRS["workspace_uploads"], "webcam.jpg")
+                if os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        img_bytes = f.read()
+                    analysis = await vision_service.analyze_image(img_bytes, clean_prompt)
+                    yield f"data: {json.dumps({'type': 'token', 'text': analysis})}\n\n"
+                    return
+
+            # 0. Retrieve conversational context
+            context = await memory_service.get_context(session_id=session_id)
+
+            # 1. Classify intent and get execution plan
+            plan = await brain_service.classify_and_plan(prompt)
+            
+            # 2. Check if there are tasks to execute
+            if plan.intent in ["task", "research", "vision"] and plan.execution_plan:
+                yield "data: " + json.dumps({"activity": {"event": "task_plan", "message": "Executing task plan..."}}) + "\n\n"
+                
+                event_queue = asyncio.Queue()
+                
+                # Stream conversational acknowledgment token-by-token
+                messages = [
+                    {"role": "system", "content": "You are VICTOR. Acknowledge the user's research/task request and state concisely that search or execution protocols are running. CRITICAL: Do NOT attempt to answer the user's question, offer data points, or guess values yourself. Keep it strictly limited to a professional system confirmation."},
+                    {"role": "user", "content": prompt}
+                ]
+                
+                ai_stream = ai_service.stream_chat_completion(messages)
+                
+                full_response_parts = []
+                async def consume_ai_stream():
+                    try:
+                        sentence_buffer = ""
+                        async for chunk in ai_stream:
+                            full_response_parts.append(chunk)
+                            await event_queue.put({"type": "chunk", "text": chunk})
+                            
+                            if use_tts:
+                                sentence_buffer += chunk
+                                match = re.search(r'(?<=[.!?])\s+', sentence_buffer)
+                                if match:
+                                    sentence = sentence_buffer[:match.end()].strip()
+                                    sentence_buffer = sentence_buffer[match.end():]
+                                    if sentence:
+                                        await event_queue.put({"type": "tts_sentence", "text": sentence})
+
+                        if use_tts and sentence_buffer.strip():
+                            await event_queue.put({"type": "tts_sentence", "text": sentence_buffer.strip()})
+                            
+                    except Exception as e:
+                        await event_queue.put({"type": "error", "text": str(e)})
+                    finally:
+                        await event_queue.put({"type": "_ai_done"})
+
+                async def execute_tasks():
+                    try:
+                        await task_executor.execute_plan(plan.execution_plan, event_queue)
+                    except Exception as e:
+                        await event_queue.put({"type": "error", "text": str(e)})
+                    finally:
+                        await event_queue.put({"type": "_exec_done"})
+
+                asyncio.create_task(consume_ai_stream())
+                asyncio.create_task(execute_tasks())
+                
+                ai_done = False
+                exec_done = False
+                
+                while not (ai_done and exec_done):
+                    item = await event_queue.get()
+                    if item["type"] == "_ai_done":
+                        ai_done = True
+                    elif item["type"] == "_exec_done":
+                        exec_done = True
+                    elif item["type"] == "chunk":
+                        yield f"data: {json.dumps({'type': 'token', 'text': item['text']})}\n\n"
+                    elif item["type"] == "tts_sentence":
+                        audio_b64 = await synthesize_speech_to_b64(item["text"])
+                        if audio_b64:
+                            yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                    elif item["type"] == "task_status":
+                        yield "data: " + json.dumps({"activity": {"event": item.get('status'), "message": item.get('step')}}) + "\n\n"
+                    elif item["type"] == "token":
+                        yield f"data: {json.dumps({'type': 'token', 'text': item['text']})}\n\n"
+                    elif item["type"] == "error":
+                        yield "data: " + json.dumps({"error": item["text"]}) + "\n\n"
+                        
+                full_response = "".join(full_response_parts)
+                await memory_service.save_interaction(session_id, prompt, full_response)
+            else:
+                yield "data: " + json.dumps({"activity": {"event": "chat", "message": "Thinking..."}}) + "\n\n"
+                
+                messages = [
+                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}, a highly capable AI tactical assistant.\n\n{context}"},
+                    {"role": "user", "content": prompt}
+                ]
+
+                full_response_parts = []
+                sentence_buffer = ""
+                async for chunk in ai_service.stream_chat_completion(messages):
+                    full_response_parts.append(chunk)
+                    yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+                    
+                    if use_tts:
+                        sentence_buffer += chunk
+                        match = re.search(r'(?<=[.!?])\s+', sentence_buffer)
+                        if match:
+                            sentence = sentence_buffer[:match.end()].strip()
+                            sentence_buffer = sentence_buffer[match.end():]
+                            if sentence:
+                                audio_b64 = await synthesize_speech_to_b64(sentence)
+                                if audio_b64:
+                                    yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                                    
+                if use_tts and sentence_buffer.strip():
+                    audio_b64 = await synthesize_speech_to_b64(sentence_buffer.strip())
+                    if audio_b64:
+                        yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+
+                full_response = "".join(full_response_parts)
+                await memory_service.save_interaction(session_id, prompt, full_response)
+                
+        except Exception as e:
+            yield "data: " + json.dumps({"error": str(e)}) + "\n\n"
+            
+        finally:
+            yield "data: " + json.dumps({"done": True}) + "\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     file_path = os.path.join(config.DIRS["workspace_uploads"], "webcam.jpg")
@@ -237,6 +380,10 @@ async def tts_endpoint(req: TTSRequest):
                 await asyncio.sleep(0.5)
                 
     return StreamingResponse(audio_stream(), media_type="audio/mpeg")
+
+@app.get("/app/audio/{file_name}")
+async def silent_audio_placeholder(file_name: str):
+    return {"status": "silent_mode"}
 
 # Mount frontend at the root route to serve cleanly
 app.mount("/", StaticFiles(directory=config.DIRS["frontend"], html=True), name="frontend")

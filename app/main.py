@@ -89,7 +89,7 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                     with open(file_path, "rb") as f:
                         img_bytes = f.read()
                     analysis = await vision_service.analyze_image(img_bytes, clean_prompt)
-                    yield f"data: {json.dumps({'type': 'token', 'text': analysis})}\n\n"
+                    yield "data: " + json.dumps({"chunk": analysis}) + "\n\n"
                     return
 
             # 0. Retrieve conversational context
@@ -231,7 +231,7 @@ async def post_stream_endpoint(payload: ChatPayload):
                     with open(file_path, "rb") as f:
                         img_bytes = f.read()
                     analysis = await vision_service.analyze_image(img_bytes, clean_prompt)
-                    yield f"data: {json.dumps({'type': 'token', 'text': analysis})}\n\n"
+                    yield "data: " + json.dumps({"chunk": analysis}) + "\n\n"
                     return
 
             # 0. Retrieve conversational context
@@ -300,7 +300,7 @@ async def post_stream_endpoint(payload: ChatPayload):
                     elif item["type"] == "_exec_done":
                         exec_done = True
                     elif item["type"] == "chunk":
-                        yield f"data: {json.dumps({'type': 'token', 'text': item['text']})}\n\n"
+                        yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "tts_sentence":
                         audio_b64 = await synthesize_speech_to_b64(item["text"])
                         if audio_b64:
@@ -308,7 +308,7 @@ async def post_stream_endpoint(payload: ChatPayload):
                     elif item["type"] == "task_status":
                         yield "data: " + json.dumps({"activity": {"event": item.get('status'), "message": item.get('step')}}) + "\n\n"
                     elif item["type"] == "token":
-                        yield f"data: {json.dumps({'type': 'token', 'text': item['text']})}\n\n"
+                        yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "error":
                         yield "data: " + json.dumps({"error": item["text"]}) + "\n\n"
                         
@@ -326,7 +326,7 @@ async def post_stream_endpoint(payload: ChatPayload):
                 sentence_buffer = ""
                 async for chunk in ai_service.stream_chat_completion(messages):
                     full_response_parts.append(chunk)
-                    yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+                    yield "data: " + json.dumps({"chunk": chunk}) + "\n\n"
                     
                     if use_tts:
                         sentence_buffer += chunk

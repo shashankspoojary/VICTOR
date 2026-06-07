@@ -165,6 +165,14 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                             yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
                     elif item["type"] == "task_status":
                         yield "data: " + json.dumps({"activity": {"event": item.get('status'), "message": item.get('step')}}) + "\n\n"
+                    elif item["type"] == "search_results":
+                        yield "data: " + json.dumps({
+                            "search_results": {
+                                "query": item["query"],
+                                "answer": item["answer"],
+                                "results": item["results"]
+                            }
+                        }) + "\n\n"
                     elif item["type"] == "token":
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "error":
@@ -307,6 +315,14 @@ async def post_stream_endpoint(payload: ChatPayload):
                             yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
                     elif item["type"] == "task_status":
                         yield "data: " + json.dumps({"activity": {"event": item.get('status'), "message": item.get('step')}}) + "\n\n"
+                    elif item["type"] == "search_results":
+                        yield "data: " + json.dumps({
+                            "search_results": {
+                                "query": item["query"],
+                                "answer": item["answer"],
+                                "results": item["results"]
+                            }
+                        }) + "\n\n"
                     elif item["type"] == "token":
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "error":

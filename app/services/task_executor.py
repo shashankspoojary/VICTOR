@@ -84,7 +84,12 @@ class TaskExecutor:
             results = await realtime_service.search(param)
             console.print(f"[blue]Research Results for '{param}':[/blue]\n{results}")
             if event_queue:
-                await event_queue.put({"type": "token", "text": f"\n\n[Research Results]:\n{results}"})
+                await event_queue.put({
+                    "type": "search_results",
+                    "query": param,
+                    "answer": results,
+                    "results": []
+                })
         else:
             console.print(f"[red]Unknown action:[/red] {action}")
 

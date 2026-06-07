@@ -50,9 +50,6 @@ async def get_task(task_id: str):
     return BACKGROUND_TASKS.get(task_id, {"status": "not_found"})
 
 class ChatPayload(BaseModel):
-    prompt: str
-
-class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = "default"
     tts: Optional[bool] = False
@@ -218,9 +215,9 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
 
 @app.post("/chat/victor/stream")
 async def post_stream_endpoint(payload: ChatPayload):
-    prompt = payload.prompt
-    session_id = "default"
-    use_tts = False
+    prompt = payload.message  # Map payload.message directly to our internal prompt execution logic
+    session_id = payload.session_id or "default"
+    use_tts = payload.tts or False
 
     async def event_generator():
         try:

@@ -65,14 +65,19 @@ async function playTTS(text) {
     
     // Scrub code snippets and markdown
     let scrubbed = text.replace(/```[\s\S]*?```/g, ''); // Remove code blocks
+    scrubbed = scrubbed.replace(/\[Research Results\][\s\S]*?(?:\[\/Research Results\]|$)/gi, '');
     scrubbed = scrubbed.replace(/[*_#`~>]/g, ''); // Remove markdown characters
-    scrubbed = scrubbed.trim();
+    scrubbed = scrubbed.trim().slice(0, 1000);
     
     if (!scrubbed) return;
     
     if (isVoiceEnabled) {
         try {
-            const response = await fetch(`/api/tts?text=${encodeURIComponent(scrubbed)}`);
+            const response = await fetch('/api/tts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: scrubbed })
+            });
             if (!response.ok) throw new Error('TTS network response was not ok');
             
             const blob = await response.blob();
@@ -226,3 +231,58 @@ chatInput.addEventListener('keypress', (e) => {
         sendMessage();
     }
 });
+
+const cameraTrigger = document.getElementById('camera-trigger');
+if (cameraTrigger) {
+    cameraTrigger.addEventListener('click', async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            
+            video.onloadedmetadata = async () => {
+                await video.play();
+                
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Stop all tracks immediately to turn off physical LED
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                
+                // Create shutter flash effect
+                const flash = document.createElement('div');
+                flash.className = 'camera-flash';
+                document.body.appendChild(flash);
+                setTimeout(() => flash.remove(), 300);
+                
+                // Convert frame to blob and send POST to /api/upload
+                canvas.toBlob(async (blob) => {
+                    const formData = new FormData();
+                    formData.append('file', blob, 'webcam.jpg');
+                    
+                    try {
+                        const response = await fetch('/api/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        if (response.ok) {
+                            chatInput.value = "TTCAMTOKENTT Visual analysis request. Describe this operational scene.";
+                            sendMessage();
+                        } else {
+                            console.error('Upload failed with status:', response.status);
+                        }
+                    } catch (e) {
+                        console.error('Upload error:', e);
+                    }
+                }, 'image/jpeg');
+            };
+        } catch (e) {
+            console.error('Camera access error:', e);
+        }
+    });
+}

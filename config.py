@@ -57,4 +57,4 @@ TTS_RATE = os.getenv("TTS_RATE", "+22%")
 # Persona Settings
 ASSISTANT_NAME = os.getenv("ASSISTANT_NAME", "VICTOR")
 VICTOR_USER_TITLE = os.getenv("VICTOR_USER_TITLE", "Sir")
-VICTOR_OWNER_NAME = os.getenv("VICTOR_OWNER_NAME", "Shashankr")
+VICTOR_OWNER_NAME = os.getenv("VICTOR_OWNER_NAME", "Shashank")

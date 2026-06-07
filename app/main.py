@@ -1,7 +1,7 @@
 import asyncio
 import json
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +17,8 @@ from app.services.brain_service import brain_service
 from app.services.task_executor import task_executor
 from app.services.ai_service import ai_service
 from app.services.memory_service import memory_service
+from app.services.vision_service import vision_service
+from app.models import TTSRequest
 
 app = FastAPI(title="VICTOR Premium Web Server")
 
@@ -37,6 +39,23 @@ app.add_middleware(
 async def stream_endpoint(prompt: str):
     async def event_generator():
         try:
+            if "TTCAMTOKENTT" in prompt:
+                clean_prompt = prompt.replace("TTCAMTOKENTT", "").strip()
+                upload_dir = config.DIRS["workspace_uploads"]
+                files = [f for f in upload_dir.iterdir() if f.is_file()]
+                if not files:
+                    yield f"data: {json.dumps({'type': 'error', 'text': 'No image found for vision analysis.'})}\n\n"
+                    return
+                
+                most_recent_file = max(files, key=lambda f: f.stat().st_mtime)
+                with open(most_recent_file, "rb") as f:
+                    image_bytes = f.read()
+                
+                analysis = await vision_service.analyze_image(image_bytes, clean_prompt)
+                
+                yield f"data: {json.dumps({'type': 'token', 'text': analysis})}\n\n"
+                return
+
             # 0. Retrieve conversational context
             context = await memory_service.get_context(session_id="default")
 
@@ -118,13 +137,22 @@ async def stream_endpoint(prompt: str):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-@app.get("/api/tts")
-async def tts_endpoint(text: str):
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    upload_dir = config.DIRS["workspace_uploads"]
+    file_path = upload_dir / file.filename
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+    return {"filename": file.filename, "status": "saved"}
+
+@app.post("/api/tts")
+async def tts_endpoint(req: TTSRequest):
     async def audio_stream():
         import asyncio
         for attempt in range(3):
             try:
-                communicate = edge_tts.Communicate(text, config.TTS_VOICE, rate=config.TTS_RATE)
+                communicate = edge_tts.Communicate(req.text, config.TTS_VOICE, rate=config.TTS_RATE)
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
                         yield chunk["data"]

@@ -1,4 +1,6 @@
 // WebGL Orb Initialization
+let isVoiceEnabled = true;
+
 const canvas = document.getElementById('webgl-orb');
 const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
 const scene = new THREE.Scene();
@@ -42,8 +44,46 @@ const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const chatHistory = document.getElementById('chat-history');
 const taskList = document.getElementById('task-list');
+const voiceToggle = document.getElementById('voice-toggle');
+
+voiceToggle.addEventListener('click', () => {
+    isVoiceEnabled = !isVoiceEnabled;
+    if (isVoiceEnabled) {
+        voiceToggle.classList.add('voice-active');
+        voiceToggle.textContent = 'VOICE: ON';
+    } else {
+        voiceToggle.classList.remove('voice-active');
+        voiceToggle.textContent = 'VOICE: OFF';
+    }
+});
 
 let currentSystemMessageText = null;
+const ttsAudioPlayer = new Audio();
+
+async function playTTS(text) {
+    if (!text) return;
+    
+    // Scrub code snippets and markdown
+    let scrubbed = text.replace(/```[\s\S]*?```/g, ''); // Remove code blocks
+    scrubbed = scrubbed.replace(/[*_#`~>]/g, ''); // Remove markdown characters
+    scrubbed = scrubbed.trim();
+    
+    if (!scrubbed) return;
+    
+    if (isVoiceEnabled) {
+        try {
+            const response = await fetch(`/api/tts?text=${encodeURIComponent(scrubbed)}`);
+            if (!response.ok) throw new Error('TTS network response was not ok');
+            
+            const blob = await response.blob();
+            const audioUrl = URL.createObjectURL(blob);
+            ttsAudioPlayer.src = audioUrl;
+            ttsAudioPlayer.play().catch(e => console.error("Audio play error:", e));
+        } catch (e) {
+            console.error("TTS playback failed:", e);
+        }
+    }
+}
 
 function appendMessage(role, text) {
     const msgDiv = document.createElement('div');
@@ -151,6 +191,10 @@ function sendMessage() {
                 clearInterval(fastSpin);
                 sphere.material.opacity = 0.6;
                 sphere.material.color.setHex(0x7c6aef);
+                
+                if (currentSystemMessageText && currentSystemMessageText.textContent) {
+                    playTTS(currentSystemMessageText.textContent);
+                }
             }
             else if (data.type === 'error') {
                 if (!currentSystemMessageText) appendMessage('system', '');

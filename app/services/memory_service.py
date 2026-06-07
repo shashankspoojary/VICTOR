@@ -25,7 +25,10 @@ class MemoryService:
                 if memory_data:
                     context_parts.append("\n[Core Facts & Preferences]")
                     for k, v in memory_data.items():
-                        context_parts.append(f"- {k}: {v}")
+                        if k == "user_owner_name":
+                            context_parts.append(f"The user's name is {v}. You are his personal assistant, VICTOR.")
+                        else:
+                            context_parts.append(f"- {k}: {v}")
         except Exception as e:
             context_parts.append(f"\n[Error reading memory: {e}]")
 

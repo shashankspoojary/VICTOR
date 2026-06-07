@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import sys
 import os
+import edge_tts
 
 # Ensure the root directory is on the python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,6 +37,9 @@ app.add_middleware(
 async def stream_endpoint(prompt: str):
     async def event_generator():
         try:
+            # 0. Retrieve conversational context
+            context = await memory_service.get_context(session_id="default")
+
             # 1. Classify intent and get execution plan
             plan = await brain_service.classify_and_plan(prompt)
             
@@ -49,7 +53,7 @@ async def stream_endpoint(prompt: str):
                 
                 # Stream conversational acknowledgment token-by-token
                 messages = [
-                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}. Acknowledge the user's request and state you are executing the tasks. Keep it very short, tactical, and professional."},
+                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}. Acknowledge the user's request and state you are executing the tasks. Keep it very short, tactical, and professional.\n\n{context}"},
                     {"role": "user", "content": prompt}
                 ]
                 
@@ -94,7 +98,7 @@ async def stream_endpoint(prompt: str):
             else:
                 # Regular chat
                 messages = [
-                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}, a highly capable AI tactical assistant."},
+                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}, a highly capable AI tactical assistant.\n\n{context}"},
                     {"role": "user", "content": prompt}
                 ]
 
@@ -113,6 +117,23 @@ async def stream_endpoint(prompt: str):
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/api/tts")
+async def tts_endpoint(text: str):
+    async def audio_stream():
+        import asyncio
+        for attempt in range(3):
+            try:
+                communicate = edge_tts.Communicate(text, config.TTS_VOICE, rate=config.TTS_RATE)
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        yield chunk["data"]
+                break
+            except Exception as e:
+                print(f"TTS Retry {attempt+1} failed: {e}")
+                await asyncio.sleep(0.5)
+                
+    return StreamingResponse(audio_stream(), media_type="audio/mpeg")
 
 # Mount frontend at the root route to serve cleanly
 app.mount("/", StaticFiles(directory=config.DIRS["frontend"], html=True), name="frontend")

@@ -15,6 +15,8 @@ Your job is to analyze the user input and return a cleanly structured JSON block
 If the user provides a multi-task statement like "Open Chrome, play music, and check my mail", the plan must split these into individual clear strings inside 'execution_plan'.
 When a user asks to open a platform and search/play something on it (e.g., 'Open YouTube and search lo-fi beats'), DO NOT split this into two steps. Consolidate it into a single clear step: 'Search for lo-fi beats on YouTube'.
 Distinct, unrelated actions (like looking up space news) must remain separate steps.
+If the user explicitly tells you a personal fact, preference, name, or instructs you to 'remember' a specific detail, DO NOT classify it as research or task. Set the intent to 'task' and generate a structural 'memorize' execution step.
+The step format must look like this: "Memorize key 'user_owner_name' with value 'Shashank'" or "Memorize key 'user_preference' with value 'X'".
 The 'intent' should be one of: chat, research, vision, task.
 
 {memory_context}

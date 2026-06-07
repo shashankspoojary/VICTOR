@@ -6,6 +6,7 @@ from typing import List
 from rich.console import Console
 from app.services.ai_service import ai_service
 from app.services.realtime_service import realtime_service
+from app.services.memory_service import memory_service
 
 console = Console()
 
@@ -27,8 +28,10 @@ class TaskExecutor:
             f"Supported primitives:\n"
             f"- {{\"action\": \"open_url\", \"param\": \"URL_STRING\"}}\n"
             f"- {{\"action\": \"research\", \"param\": \"SEARCH_QUERY\"}}\n"
-            f"- {{\"action\": \"play_youtube\", \"param\": \"SEARCH_QUERY\"}}\n\n"
+            f"- {{\"action\": \"play_youtube\", \"param\": \"SEARCH_QUERY\"}}\n"
+            f"- {{\"action\": \"memorize\", \"key\": \"FIELD_NAME\", \"value\": \"DATA_STRING\"}}\n\n"
             f"CRITICAL INSTRUCTION: If the task text explicitly requests to 'play' music, a song, or a video on YouTube, select the 'play_youtube' action instead of a standard 'open_url' search page.\n"
+            f"Instruct the translator model to convert any explicit step starting with 'Memorize' into the 'memorize' structural JSON primitive.\n"
             f"Look at the consolidated step text. If it just says 'on YouTube' but not 'play', it must output:\n"
             f"{{\"action\": \"open_url\", \"param\": \"https://www.youtube.com/results?search_query=lo-fi+beats\"}}\n"
             f"If a step does not mention a specific browser platform (e.g., 'Look up current news on space exploration'), it must be routed as a background intelligence action:\n"
@@ -54,7 +57,14 @@ class TaskExecutor:
         action = primitive.get("action")
         param = primitive.get("param")
         
-        if action == "open_url":
+        if action == "memorize":
+            param_key = primitive.get("key")
+            param_value = primitive.get("value")
+            await memory_service.update_memory(param_key, param_value)
+            console.print(f"[bold green]✓ Memory Updated:[/bold green] {param_key} -> {param_value}")
+            if event_queue:
+                await event_queue.put({"type": "token", "text": "Understood, Sir. I have updated my records."})
+        elif action == "open_url":
             console.print(f"[green]Opening URL:[/green] {param}")
             webbrowser.open(param)
         elif action == "play_youtube":

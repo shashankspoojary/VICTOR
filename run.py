@@ -56,7 +56,7 @@ def main():
     check_env_variables()
     
     # Success message
-    console.print("[bold green]✓ VICTOR Core System Initialized Successfully[/bold green]\n")
+    console.print("[bold green][SUCCESS] VICTOR Core System Initialized Successfully[/bold green]\n")
     
     # Start the server
     console.print(f"[bold green]Dashboard is live at http://{config.HOST}:{config.PORT}[/bold green]")

@@ -301,28 +301,33 @@ async def post_stream_endpoint(payload: ChatPayload):
                 ai_done = False
                 exec_done = False
                 
-                while not (ai_done and exec_done):
+                active_tts_tasks = 0
+                while not (ai_done and exec_done and active_tts_tasks == 0):
                     item = await event_queue.get()
-                    if item["type"] == "_ai_done":
+                    if item.get("type") == "done":
+                        break
+                    elif item["type"] == "_ai_done":
                         ai_done = True
                     elif item["type"] == "_exec_done":
                         exec_done = True
                     elif item["type"] == "chunk":
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "tts_sentence":
-                        audio_b64 = await synthesize_speech_to_b64(item["text"])
-                        if audio_b64:
-                            yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                        active_tts_tasks += 1
+                        async def bg_tts(txt):
+                            b64 = await synthesize_speech_to_b64(txt)
+                            await event_queue.put({"type": "audio_b64", "data": b64})
+                        asyncio.create_task(bg_tts(item["text"]))
+                    elif item["type"] == "audio_b64":
+                        active_tts_tasks -= 1
+                        if item["data"]:
+                            yield "data: " + json.dumps({"audio": item["data"]}) + "\n\n"
                     elif item["type"] == "task_status":
                         yield "data: " + json.dumps({"activity": {"event": item.get('status'), "message": item.get('step')}}) + "\n\n"
                     elif item["type"] == "search_results":
-                        yield "data: " + json.dumps({
-                            "search_results": {
-                                "query": item["query"],
-                                "answer": item["answer"],
-                                "results": item["results"]
-                            }
-                        }) + "\n\n"
+                        yield "data: " + json.dumps({"search_results": {"query": item["query"], "answer": item["answer"], "results": item["results"]}}) + "\n\n"
+                        if use_tts and item.get("answer"):
+                            await event_queue.put({"type": "tts_sentence", "text": item["answer"]})
                     elif item["type"] == "token":
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "error":
@@ -332,33 +337,57 @@ async def post_stream_endpoint(payload: ChatPayload):
                 await memory_service.save_interaction(session_id, prompt, full_response)
             else:
                 yield "data: " + json.dumps({"activity": {"event": "chat", "message": "Thinking..."}}) + "\n\n"
-                
                 messages = [
                     {"role": "system", "content": f"You are {config.ASSISTANT_NAME}, a highly capable AI tactical assistant.\n\n{context}"},
                     {"role": "user", "content": prompt}
                 ]
-
                 full_response_parts = []
-                sentence_buffer = ""
-                async for chunk in ai_service.stream_chat_completion(messages):
-                    full_response_parts.append(chunk)
-                    yield "data: " + json.dumps({"chunk": chunk}) + "\n\n"
-                    
-                    if use_tts:
-                        sentence_buffer += chunk
-                        match = re.search(r'(?<=[.!?])\s+', sentence_buffer)
-                        if match:
-                            sentence = sentence_buffer[:match.end()].strip()
-                            sentence_buffer = sentence_buffer[match.end():]
-                            if sentence:
-                                audio_b64 = await synthesize_speech_to_b64(sentence)
-                                if audio_b64:
-                                    yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
-                                    
-                if use_tts and sentence_buffer.strip():
-                    audio_b64 = await synthesize_speech_to_b64(sentence_buffer.strip())
-                    if audio_b64:
-                        yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                event_queue = asyncio.Queue()
+
+                async def consume_chat_stream():
+                    try:
+                        sentence_buffer = ""
+                        async for chunk in ai_service.stream_chat_completion(messages):
+                            full_response_parts.append(chunk)
+                            await event_queue.put({"type": "chunk", "text": chunk})
+                            if use_tts:
+                                sentence_buffer += chunk
+                                match = re.search(r'(?<=[.!?])\s+', sentence_buffer)
+                                if match:
+                                    sentence = sentence_buffer[:match.end()].strip()
+                                    sentence_buffer = sentence_buffer[match.end():]
+                                    if sentence:
+                                        await event_queue.put({"type": "tts_sentence", "text": sentence})
+                        if use_tts and sentence_buffer.strip():
+                            await event_queue.put({"type": "tts_sentence", "text": sentence_buffer.strip()})
+                    except Exception as e:
+                        await event_queue.put({"type": "error", "text": str(e)})
+                    finally:
+                        await event_queue.put({"type": "_ai_done"})
+
+                asyncio.create_task(consume_chat_stream())
+
+                ai_done = False
+                active_tts_tasks = 0
+
+                while not (ai_done and active_tts_tasks == 0):
+                    item = await event_queue.get()
+                    if item["type"] == "_ai_done":
+                        ai_done = True
+                    elif item["type"] == "chunk":
+                        yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
+                    elif item["type"] == "tts_sentence":
+                        active_tts_tasks += 1
+                        async def bg_tts(txt):
+                            b64 = await synthesize_speech_to_b64(txt)
+                            await event_queue.put({"type": "audio_b64", "data": b64})
+                        asyncio.create_task(bg_tts(item["text"]))
+                    elif item["type"] == "audio_b64":
+                        active_tts_tasks -= 1
+                        if item["data"]:
+                            yield "data: " + json.dumps({"audio": item["data"]}) + "\n\n"
+                    elif item["type"] == "error":
+                        yield "data: " + json.dumps({"error": item["text"]}) + "\n\n"
 
                 full_response = "".join(full_response_parts)
                 await memory_service.save_interaction(session_id, prompt, full_response)

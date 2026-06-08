@@ -88,26 +88,11 @@ class TaskExecutor:
             results = await realtime_service.search(param)
             console.print(f"[blue]Research Results for '{param}':[/blue]\n{results}")
 
-            # Synthesize clean tactical answer from raw results debris
-            summary_prompt = (
-                f"Analyze the following raw search results and extract a clean, concise, direct answer to the query: '{param}'.\n"
-                f"Strip out all webpage navigation links, raw markdown tables, website cookies text, and bracket crumbs. "
-                f"Present only the definitive numerical values or core data points beautifully and professionaly."
-                f"\n\nRaw Search Data:\n{results}"
-            )
-            try:
-                clean_answer = await ai_service.get_chat_completion(
-                    messages=[{"role": "user", "content": summary_prompt}],
-                    temperature=0.2
-                )
-            except Exception:
-                clean_answer = results
-
             if event_queue:
                 await event_queue.put({
                     "type": "search_results",
                     "query": param,
-                    "answer": clean_answer,
+                    "answer": results,
                     "results": []
                 })
         else:

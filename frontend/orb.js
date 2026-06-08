@@ -115,6 +115,12 @@ class OrbRenderer {
             this.targetHoverIntensity = 0.5;
         }
 
+        /* Reset hover distortion for non-speaking states to prevent shake/glitch
+           on state transitions (e.g., after pressing Enter to submit a command) */
+        if (state !== 'speaking') {
+            this.targetHover = 0;
+        }
+
         /* If leaving speaking, ensure TTS flags are cleaned up */
         if (prevState === 'speaking' && state !== 'speaking') {
             this.ttsSpeaking = false;

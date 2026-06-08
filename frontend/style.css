@@ -621,6 +621,31 @@ textarea {
     font-weight: 300;
 }
 
+/* ── Thinking dots: instant animated pulse shown while waiting for server ── */
+.victor-thinking-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 0;
+}
+.victor-thinking-dots span {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent, #7c6cff);
+    opacity: 0.3;
+    animation: victor-dot-pulse 1.2s ease-in-out infinite;
+}
+.victor-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.victor-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes victor-dot-pulse {
+    0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+    40%            { opacity: 1;   transform: scale(1.2); }
+}
+
+
 /* ================================================================
    Action Results in Messages
    ================================================================ */

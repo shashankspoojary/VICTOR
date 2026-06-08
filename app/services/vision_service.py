@@ -18,6 +18,10 @@ class VisionService:
         
         messages = [
             {
+                "role": "system",
+                "content": "You are a vision-capable AI assistant. You are looking at a webcam snapshot or an uploaded image from the user. Analyze the image and answer the user's query directly by describing what you see. Do not claim you are unable to see images or perceive the physical world, since the image is provided directly to you."
+            },
+            {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},

@@ -644,16 +644,18 @@ const CAMERA_QUERY_PATTERNS = [
     /what\s+(can|do)\s+you\s+see/i,
     /can\s+you\s+see/i,
     /describe\s+(what\s+you\s+see|this|the\s+image)/i,
-    /what('s|s)\sss+in\sss+(this\sss+)?(picture|image)/i,
+    /what('s|s)\s+in\s+(this\s+)?(picture|image)/i,
     /what\s+do\s+i\s+look\s+like/i,
     /what\s+(am\s+i\s+)?holding/i,
     /show\s+me\s+what\s+you\s+see/i,
+    /do\s+you\s+see\s+me/i,
+    /look\s+at\s+(me|this|the\s+screen)/i,
 ];
 function isCameraQuery(text) {
     if (!text || typeof text !== 'string') return false;
     const t = text.trim().toLowerCase();
     return CAMERA_QUERY_PATTERNS.some(r => r.test(t)) ||
-        (t.includes('see') && (t.includes('what') || t.includes('describe')));
+        (t.includes('see') && (t.includes('what') || t.includes('describe') || t.includes('can')));
 }
 
 function startCamera() {
@@ -1117,14 +1119,30 @@ function captureFrameAsBase64() {
 
 async function captureFrameAsBase64Safe() {
     if (!camVideo || !camStream || !camCanvas) return null;
+
+    // Use ImageCapture API if available — most reliable method
+    if (typeof ImageCapture !== 'undefined') {
+        try {
+            const track = camStream.getVideoTracks()[0];
+            if (track && track.readyState === 'live') {
+                const imageCapture = new ImageCapture(track);
+                const blob = await imageCapture.takePhoto();
+                return await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result.split(',')[1]);
+                    reader.onerror = () => resolve(null);
+                    reader.readAsDataURL(blob);
+                });
+            }
+        } catch (_) { /* fall through to canvas method */ }
+    }
+
+    // Canvas fallback
     return new Promise((resolve) => {
         const doCapture = () => {
             const w = camVideo.videoWidth;
             const h = camVideo.videoHeight;
-            if (!w || !h || w < 64 || h < 64) {
-                resolve(null);
-                return;
-            }
+            if (!w || !h || w < 64 || h < 64) { resolve(null); return; }
             camCanvas.width = w;
             camCanvas.height = h;
             const ctx = camCanvas.getContext('2d');
@@ -1132,32 +1150,28 @@ async function captureFrameAsBase64Safe() {
             ctx.drawImage(camVideo, 0, 0, w, h);
             try {
                 const b64 = camCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
-                resolve(b64);
-            } catch (_) {
-                resolve(null);
-            }
+                resolve(b64 || null);
+            } catch (_) { resolve(null); }
         };
+
         if (camVideo.readyState < 2) {
-            const onReady = () => { camVideo.removeEventListener('loadeddata', onReady); doCapture(); };
+            const onReady = () => { camVideo.removeEventListener('loadeddata', onReady); clearTimeout(t); setTimeout(doCapture, 200); };
+            const t = setTimeout(() => { camVideo.removeEventListener('loadeddata', onReady); doCapture(); }, 4000);
             camVideo.addEventListener('loadeddata', onReady);
-            setTimeout(() => { camVideo.removeEventListener('loadeddata', onReady); doCapture(); }, 3000);
             return;
         }
-        const w = camVideo.videoWidth;
-        const h = camVideo.videoHeight;
-        if (w && h && w >= 64 && h >= 64) {
+
+        if (camVideo.videoWidth >= 64 && camVideo.videoHeight >= 64) {
             if (typeof camVideo.requestVideoFrameCallback === 'function') {
-                camVideo.requestVideoFrameCallback(() => { doCapture(); });
+                camVideo.requestVideoFrameCallback(() => doCapture());
             } else {
                 setTimeout(doCapture, 150);
             }
         } else {
             setTimeout(() => {
-                const w2 = camVideo.videoWidth || 0;
-                const h2 = camVideo.videoHeight || 0;
-                if (w2 && h2 && w2 >= 64 && h2 >= 64) doCapture();
+                if (camVideo.videoWidth >= 64 && camVideo.videoHeight >= 64) doCapture();
                 else resolve(null);
-            }, 300);
+            }, 500);
         }
     });
 }
@@ -1195,6 +1209,18 @@ async function sendMessageWithImage(text, imgBase64) {
     const controller = new AbortController();
     try {
         timeoutId = setTimeout(() => controller.abort(), 300000);
+        // Upload the webcam frame to disk before calling the stream
+        if (imgBase64) {
+            try {
+                const byteStr = atob(imgBase64);
+                const arr = new Uint8Array(byteStr.length);
+                for (let i = 0; i < byteStr.length; i++) arr[i] = byteStr.charCodeAt(i);
+                const blob = new Blob([arr], { type: 'image/jpeg' });
+                const formData = new FormData();
+                formData.append('file', blob, 'webcam.jpg');
+                await fetch(`${API}/api/upload`, { method: 'POST', body: formData });
+            } catch (_) { /* non-fatal */ }
+        }
         const res = await fetch(`${API}/chat/victor/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1804,10 +1830,11 @@ function addTypingIndicator() {
     body.className = 'msg-body';
     const label = document.createElement('div');
     label.className = 'msg-label';
-    label.textContent = `Jarvis  (${currentMode === 'jarvis' ? 'Jarvis' : currentMode === 'realtime' ? 'Realtime' : 'General'})`;
+    label.textContent = `VICTOR  (${currentMode === 'jarvis' ? 'Jarvis' : currentMode === 'realtime' ? 'Realtime' : 'General'})`;
     const content = document.createElement('div');
     content.className = 'msg-content';
-    content.innerHTML = '<span class="msg-stream-text">...</span>';
+    // Animated pulsing dots — visible immediately on Enter
+    content.innerHTML = '<span class="msg-stream-text"><span class="victor-thinking-dots"><span></span><span></span><span></span></span></span>';
     body.appendChild(label);
     body.appendChild(content);
     msg.appendChild(avatar);
@@ -1847,21 +1874,54 @@ async function sendMessage(textOverride) {
     if ((isCameraQuery(text) || visionModeOn) && !camStream) {
         try {
             await startCamera();
+            // Wait until video dimensions are valid
             await new Promise((resolve) => {
                 if (!camVideo) { resolve(); return; }
-                if (camVideo.readyState >= 2 && camVideo.videoWidth > 0) { resolve(); return; }
+                if (camVideo.readyState >= 2 && camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
+                    resolve(); return;
+                }
                 const onReady = () => { camVideo.removeEventListener('loadeddata', onReady); clearTimeout(t); resolve(); };
-                const t = setTimeout(() => { camVideo.removeEventListener('loadeddata', onReady); resolve(); }, 3000);
+                const t = setTimeout(() => { camVideo.removeEventListener('loadeddata', onReady); resolve(); }, 5000);
                 camVideo.addEventListener('loadeddata', onReady);
             });
-        } catch (_) {
+            // Camera sensor warmup
+            await new Promise(r => setTimeout(r, 800));
+        } catch (_) {}
+    } else if (camStream && wantsCamera) {
+        // Camera already running — still give a brief moment for the frame to be fresh
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    let imgBase64 = null;
+    let uploadedSuccessfully = false;
+    if (camStream && wantsCamera) {
+        // Try capture up to 4 times
+        for (let attempt = 0; attempt < 4; attempt++) {
+            imgBase64 = await captureFrameAsBase64Safe();
+            if (imgBase64) break;
+            await new Promise(r => setTimeout(r, 500));
+        }
+        if (imgBase64) {
+            // Upload image to disk immediately — if this succeeds, token will be in the message
+            try {
+                const byteStr = atob(imgBase64);
+                const arr = new Uint8Array(byteStr.length);
+                for (let i = 0; i < byteStr.length; i++) arr[i] = byteStr.charCodeAt(i);
+                const blob = new Blob([arr], { type: 'image/jpeg' });
+                const formData = new FormData();
+                formData.append('file', blob, 'webcam.jpg');
+                const upRes = await fetch(`${API}/api/upload`, { method: 'POST', body: formData });
+                uploadedSuccessfully = upRes.ok;
+            } catch (_) {}
+            if (!uploadedSuccessfully) {
+                imgBase64 = null; // Don't send token if upload failed
+                showToast('Camera upload failed. Please try again.');
+            }
+        } else {
+            showToast('Camera frame not ready. Please try again.');
         }
     }
-    let imgBase64 = null;
-    if (camStream && wantsCamera) {
-        imgBase64 = await captureFrameAsBase64Safe();
-        if (!imgBase64) showToast('Camera frame not ready. Please try again.');
-    }
+
     // Build user-visible attachments for rendering
     const userAttachments = selectedFiles.map(f => ({
         name: f.name,
@@ -1908,7 +1968,48 @@ async function sendMessage(textOverride) {
         if (ttsPlayer?.enabled && settings.thinkingSounds && preStarterPlayer) {
             preStarterPlayer.play(() => {});
         }
+
+        // ── Instant voice acknowledgment fired the moment Enter is pressed ──
+        if (ttsPlayer?.enabled) {
+            const ACK_PHRASES = [
+                'On it, Sir.',
+                'Sure, let me check that.',
+                'Right away, Sir.',
+                'Let me look that up.',
+                'Searching now.',
+                'Got it, one moment.',
+            ];
+            const ackText = ACK_PHRASES[Math.floor(Math.random() * ACK_PHRASES.length)];
+            // Fire-and-forget: fetch TTS audio and enqueue immediately
+            fetch(`${API}/api/tts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: ackText })
+            }).then(r => {
+                if (!r.ok || !r.body) return;
+                const reader = r.body.getReader();
+                const chunks = [];
+                const pump = () => reader.read().then(({ done, value }) => {
+                    if (done) {
+                        const blob = new Blob(chunks, { type: 'audio/mpeg' });
+                        const fr = new FileReader();
+                        fr.onload = () => {
+                            const b64 = fr.result.split(',')[1];
+                            if (b64 && ttsPlayer && !ttsPlayer.stopped) ttsPlayer.enqueue(b64);
+                        };
+                        fr.readAsDataURL(blob);
+                        return;
+                    }
+                    chunks.push(value);
+                    return pump();
+                });
+                pump().catch(() => {});
+            }).catch(() => {});
+        }
+
+
         timeoutId = setTimeout(() => controller.abort(), 300000);
+
         const res = await fetch(`${API}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1929,11 +2030,19 @@ async function sendMessage(textOverride) {
             } catch (_) {}
             throw new Error(errMsg);
         }
-        removeTypingIndicator();
-        const contentEl = addMessage('assistant', '');
-        contentEl.innerHTML = '<span class="msg-stream-text">...</span>';
+        // Reuse the typing bubble in-place as the reply bubble — zero flicker, zero gap
+        const typingMsg = document.getElementById('typing-msg');
+        let contentEl;
+        if (typingMsg) {
+            typingMsg.removeAttribute('id'); // detach so removeTypingIndicator won't kill it later
+            contentEl = typingMsg.querySelector('.msg-content');
+        } else {
+            contentEl = addMessage('assistant', '');
+            contentEl.innerHTML = '<span class="msg-stream-text"><span class="victor-thinking-dots"><span></span><span></span><span></span></span></span>';
+        }
         scrollToBottom();
         if (!res.body) throw new Error('No response body');
+
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let sseBuffer = '';
@@ -1976,6 +2085,11 @@ async function sendMessage(textOverride) {
                         fullResponse += chunkText;
                         const textSpan = contentEl.querySelector('.msg-stream-text');
                         if (textSpan) {
+                            // First chunk: clear pulsing dots and start real streamed content
+                            if (!firstChunkReceived) {
+                                textSpan.innerHTML = '';
+                            }
+                            firstChunkReceived = true;
                             textSpan.textContent = fullResponse;
                             textSpan.classList.remove('stream-placeholder');
                         }

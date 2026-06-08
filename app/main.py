@@ -57,9 +57,29 @@ class ChatPayload(BaseModel):
     files: Optional[List[dict]] = None
 
 async def synthesize_speech_to_b64(text: str) -> Optional[str]:
-    # Scrub text
-    text = text.replace("*", "").replace("`", "")
-    if not text.strip():
+    # 1. Scrub thinking blocks
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    if "<think>" in text:
+        text = text.split("<think>")[0]
+        
+    # 2. Scrub markdown tables, pipes, separators, and dashes
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip table separator lines or dashes
+        if re.match(r'^[|\s\-:+\u2014]+$', stripped):
+            continue
+        cleaned_line = stripped.replace("|", " ").strip()
+        if cleaned_line:
+            cleaned_lines.append(cleaned_line)
+    text = " ".join(cleaned_lines)
+    
+    # 3. Clean remaining formatting markers
+    text = text.replace("*", "").replace("`", "").replace("#", "").strip()
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    if not text:
         return None
     try:
         communicate = edge_tts.Communicate(text, config.TTS_VOICE, rate=config.TTS_RATE)
@@ -73,18 +93,47 @@ async def synthesize_speech_to_b64(text: str) -> Optional[str]:
         print(f"TTS Error: {e}")
     return None
 
-async def _distill_answer(raw_text: str, query: str) -> str:
+# Fast non-thinking model for distillation tasks (avoids empty-output errors from thinking models)
+_FAST_MODEL = "llama-3.1-8b-instant"
+
+async def _dual_distill(raw_text: str, query: str) -> tuple:
+    """Single AI call returning (chat_answer, sidebar_answer) — one round-trip instead of two."""
     messages = [
-        {"role": "system", "content": "You are a concise data extractor. Read the provided search results and provide ONLY the specific, current numeric answer to the user's question. Do not include markdown, do not include reasoning, do not repeat the question. 1 sentence max."},
-        {"role": "user", "content": f"User Question: {query}\nSearch Results: {raw_text}"}
+        {
+            "role": "system",
+            "content": (
+                "You are VICTOR's data purification engine. "
+                "Given raw search results, return a JSON object with exactly two fields:\n"
+                "1. \"chat\": One plain-text sentence (max 25 words) giving the direct answer. "
+                "No markdown, no asterisks, no tables.\n"
+                "2. \"sidebar\": A clean structured markdown summary (max 150 words). "
+                "Use bold for key values, a small table for comparisons, or bullets for lists. "
+                "Strip all website boilerplate, ads, and SEO noise.\n"
+                "Return ONLY valid JSON — no extra text outside the JSON object."
+            )
+        },
+        {"role": "user", "content": f"Question: {query}\n\nSearch Results:\n{raw_text[:6000]}"}
     ]
-    parts = []
     try:
-        async for chunk in ai_service.stream_chat_completion(messages):
-            parts.append(chunk)
+        result = await ai_service.get_chat_completion(
+            messages,
+            model=_FAST_MODEL,
+            response_format={"type": "json_object"},
+            temperature=0.2
+        )
+        data = json.loads(result or "{}")
+        chat_ans = (data.get("chat") or "").strip()
+        sidebar_ans = (data.get("sidebar") or "").strip()
+        # Fallback if either field is empty
+        if not chat_ans:
+            chat_ans = sidebar_ans[:200].strip() if sidebar_ans else raw_text[:200].strip()
+        if not sidebar_ans:
+            sidebar_ans = chat_ans
+        return chat_ans, sidebar_ans
     except Exception as e:
-        print(f"Error distilling answer: {e}")
-    return "".join(parts).strip()
+        print(f"[_dual_distill] Error: {e}")
+        fallback = raw_text[:300].strip()
+        return fallback, fallback
 
 @app.get("/api/stream")
 async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default", tts: Optional[bool] = False):
@@ -96,20 +145,28 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
 
             if "TTCAMTOKENTT" in prompt:
                 # Clear token marker and isolate prompt text
-                clean_prompt = prompt.replace("TTCAMTOKENTT", "").strip()
+                clean_prompt = prompt.replace("TTCAMTOKENTT", "").strip() or "What do you see?"
                 file_path = os.path.join(config.DIRS["workspace_uploads"], "webcam.jpg")
                 if os.path.exists(file_path):
                     with open(file_path, "rb") as f:
                         img_bytes = f.read()
                     analysis = await vision_service.analyze_image(img_bytes, clean_prompt)
                     yield "data: " + json.dumps({"chunk": analysis}) + "\n\n"
-                    return
+                    if use_tts and analysis:
+                        audio_b64 = await synthesize_speech_to_b64(analysis)
+                        if audio_b64:
+                            yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                else:
+                    yield "data: " + json.dumps({"chunk": "I couldn't access the camera image. Please ensure your camera is active and try again."}) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                return
 
-            # 0. Retrieve conversational context
-            context = await memory_service.get_context(session_id=session_id)
 
-            # 1. Classify intent and get execution plan
-            plan = await brain_service.classify_and_plan(prompt)
+            # 0 & 1. Fetch context + classify intent concurrently (independent ops)
+            context, plan = await asyncio.gather(
+                memory_service.get_context(session_id=session_id),
+                brain_service.classify_and_plan(prompt)
+            )
             
             # 2. Check if there are tasks to execute
             if plan.intent in ["task", "research", "vision"] and plan.execution_plan:
@@ -121,6 +178,8 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                     try:
                         await task_executor.execute_plan(plan.execution_plan, event_queue)
                     except Exception as e:
+                        import traceback
+                        traceback.print_exc()
                         await event_queue.put({"type": "error", "text": str(e)})
                     finally:
                         await event_queue.put({"type": "_exec_done"})
@@ -137,11 +196,14 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                 active_tts_tasks = 0
                 response_chunks = []
                 
-                while not (exec_done and active_tts_tasks == 0):
+                while True:
                     item = await event_queue.get()
                     if item.get("type") == "done":
-                        if active_tts_tasks == 0:
+                        if active_tts_tasks == 0 and event_queue.empty():
                             break
+                        else:
+                            await event_queue.put({"type": "done"})
+                            await asyncio.sleep(0.02)
                     elif item["type"] == "_exec_done":
                         exec_done = True
                     elif item["type"] == "chunk":
@@ -160,19 +222,27 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                     elif item["type"] == "task_status":
                         yield "data: " + json.dumps({"activity": {"event": item.get('status'), "message": item.get('step')}}) + "\n\n"
                     elif item["type"] == "search_results":
-                        raw_ans = item.get("answer", "")
-                        distilled_ans = await _distill_answer(raw_ans, item["query"])
-                        if use_tts:
-                            await event_queue.put({"type": "tts_sentence", "text": distilled_ans})
-                        response_chunks.append(distilled_ans)
-                        yield "data: " + json.dumps({"chunk": distilled_ans}) + "\n\n"
+                        raw_answer = item["answer"]
+                        
+                        # Single AI call → both chat and sidebar answers at once
+                        chat_answer, sidebar_answer = await _dual_distill(raw_answer, item["query"])
+                        
+                        # 1. Short direct answer → chat bubble only
+                        response_chunks.append(chat_answer)
+                        yield "data: " + json.dumps({"chunk": chat_answer}) + "\n\n"
+                        
+                        # 2. Full structured breakdown → References sidebar only
                         yield "data: " + json.dumps({
                             "search_results": {
                                 "query": item["query"],
-                                "answer": distilled_ans,
+                                "answer": sidebar_answer,
                                 "results": item["results"]
                             }
                         }) + "\n\n"
+                        
+                        # 3. Same short answer → TTS voice engine
+                        if use_tts:
+                            await event_queue.put({"type": "tts_sentence", "text": chat_answer})
                     elif item["type"] == "token":
                         response_chunks.append(item["text"])
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
@@ -197,19 +267,34 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                     
                     if use_tts:
                         sentence_buffer += chunk
-                        match = re.search(r'(?<=[.!?])\s+', sentence_buffer)
+                        # Clean completed think blocks
+                        sentence_buffer = re.sub(r'<think>.*?</think>', '', sentence_buffer, flags=re.DOTALL)
+                        
+                        active_buffer = sentence_buffer
+                        if "<think>" in active_buffer:
+                            active_buffer = active_buffer.split("<think>")[0]
+                            
+                        match = re.search(r'(?<=[.!?])\s+', active_buffer)
                         if match:
-                            sentence = sentence_buffer[:match.end()].strip()
+                            sentence = active_buffer[:match.end()].strip()
                             sentence_buffer = sentence_buffer[match.end():]
                             if sentence:
-                                audio_b64 = await synthesize_speech_to_b64(sentence)
-                                if audio_b64:
-                                    yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                                clean_sentence = re.sub(r'<think>.*?</think>', '', sentence, flags=re.DOTALL)
+                                clean_sentence = clean_sentence.replace("*", "").replace("#", "").strip()
+                                if clean_sentence:
+                                    audio_b64 = await synthesize_speech_to_b64(clean_sentence)
+                                    if audio_b64:
+                                        yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
                                     
                 if use_tts and sentence_buffer.strip():
-                    audio_b64 = await synthesize_speech_to_b64(sentence_buffer.strip())
-                    if audio_b64:
-                        yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                    final_text = re.sub(r'<think>.*?</think>', '', sentence_buffer, flags=re.DOTALL)
+                    if "<think>" in final_text:
+                        final_text = final_text.split("<think>")[0]
+                    final_text = final_text.replace("*", "").replace("#", "").strip()
+                    if final_text:
+                        audio_b64 = await synthesize_speech_to_b64(final_text)
+                        if audio_b64:
+                            yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
 
                 full_response = "".join(full_response_parts)
                 await memory_service.save_interaction(session_id, prompt, full_response)
@@ -233,22 +318,83 @@ async def post_stream_endpoint(payload: ChatPayload):
         try:
             yield "data: " + json.dumps({"activity": {"event": "request_received", "message": "Processing request..."}}) + "\n\n"
 
-            if "TTCAMTOKENTT" in prompt:
-                # Clear token marker and isolate prompt text
-                clean_prompt = prompt.replace("TTCAMTOKENTT", "").strip()
+            # Isolate the clean prompt text and check if VLM should be used
+            clean_prompt = prompt.replace("TTCAMTOKENTT", "").strip()
+            
+            # Determine if we have any image input (direct payload base64, files, or fallback webcam file)
+            img_bytes = None
+            
+            # 1. Try payload.imgbase64
+            if payload.imgbase64:
+                try:
+                    b64_str = payload.imgbase64
+                    if "," in b64_str:
+                        b64_str = b64_str.split(",")[1]
+                    img_bytes = base64.b64decode(b64_str)
+                except Exception as e:
+                    print(f"Error decoding payload.imgbase64: {e}")
+            
+            # 2. Try uploaded image files in payload.files
+            if not img_bytes and payload.files:
+                for file_info in payload.files:
+                    file_type = file_info.get("type", "")
+                    file_data = file_info.get("data", "")
+                    if file_type.startswith("image/") and file_data:
+                        try:
+                            if "," in file_data:
+                                file_data = file_data.split(",")[1]
+                            img_bytes = base64.b64decode(file_data)
+                            break # Use the first image file
+                        except Exception as e:
+                            print(f"Error decoding uploaded image file: {e}")
+                            
+            # 3. Fallback to webcam.jpg on disk if TTCAMTOKENTT in prompt but no direct bytes
+            if not img_bytes and "TTCAMTOKENTT" in prompt:
                 file_path = os.path.join(config.DIRS["workspace_uploads"], "webcam.jpg")
                 if os.path.exists(file_path):
-                    with open(file_path, "rb") as f:
-                        img_bytes = f.read()
-                    analysis = await vision_service.analyze_image(img_bytes, clean_prompt)
+                    try:
+                        with open(file_path, "rb") as f:
+                            img_bytes = f.read()
+                    except Exception as e:
+                        print(f"Error reading webcam.jpg: {e}")
+
+            # If we successfully resolved image bytes, run the vision service!
+            if img_bytes:
+                query_text = clean_prompt or "What do you see?"
+                try:
+                    # Let the frontend know we've started image analysis
+                    yield "data: " + json.dumps({"activity": {"event": "vision_analysis", "message": "Analyzing image..."}}) + "\n\n"
+                    
+                    analysis = await vision_service.analyze_image(img_bytes, query_text)
+                    
+                    # Stream the response chunk to the UI
                     yield "data: " + json.dumps({"chunk": analysis}) + "\n\n"
-                    return
+                    
+                    # Save the interaction to memory
+                    await memory_service.save_interaction(session_id, query_text, analysis)
+                    
+                    # Generate speech output for the response if TTS is enabled
+                    if use_tts and analysis:
+                        audio_b64 = await synthesize_speech_to_b64(analysis)
+                        if audio_b64:
+                            yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                except Exception as e:
+                    yield "data: " + json.dumps({"chunk": f"Error during image analysis: {str(e)}"}) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                return
+                
+            # If camera bypass token is present but we failed to find any image
+            if "TTCAMTOKENTT" in prompt:
+                yield "data: " + json.dumps({"chunk": "I couldn't access the camera image. Please ensure your camera is active and try again."}) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                return
 
-            # 0. Retrieve conversational context
-            context = await memory_service.get_context(session_id=session_id)
 
-            # 1. Classify intent and get execution plan
-            plan = await brain_service.classify_and_plan(prompt)
+            # 0 & 1. Fetch context + classify intent concurrently (independent ops)
+            context, plan = await asyncio.gather(
+                memory_service.get_context(session_id=session_id),
+                brain_service.classify_and_plan(prompt)
+            )
             
             # 2. Check if there are tasks to execute
             if plan.intent in ["task", "research", "vision"] and plan.execution_plan:
@@ -260,6 +406,8 @@ async def post_stream_endpoint(payload: ChatPayload):
                     try:
                         await task_executor.execute_plan(plan.execution_plan, event_queue)
                     except Exception as e:
+                        import traceback
+                        traceback.print_exc()
                         await event_queue.put({"type": "error", "text": str(e)})
                     finally:
                         await event_queue.put({"type": "_exec_done"})
@@ -276,11 +424,14 @@ async def post_stream_endpoint(payload: ChatPayload):
                 active_tts_tasks = 0
                 response_chunks = []
                 
-                while not (exec_done and active_tts_tasks == 0):
+                while True:
                     item = await event_queue.get()
                     if item.get("type") == "done":
-                        if active_tts_tasks == 0:
+                        if active_tts_tasks == 0 and event_queue.empty():
                             break
+                        else:
+                            await event_queue.put({"type": "done"})
+                            await asyncio.sleep(0.02)
                     elif item["type"] == "_exec_done":
                         exec_done = True
                     elif item["type"] == "chunk":
@@ -297,13 +448,27 @@ async def post_stream_endpoint(payload: ChatPayload):
                         if item["data"]:
                             yield "data: " + json.dumps({"audio": item["data"]}) + "\n\n"
                     elif item["type"] == "search_results":
-                        raw_ans = item.get("answer", "")
-                        distilled_ans = await _distill_answer(raw_ans, item["query"])
+                        raw_answer = item["answer"]
+                        
+                        # Single AI call → both chat and sidebar answers at once
+                        chat_answer, sidebar_answer = await _dual_distill(raw_answer, item["query"])
+                        
+                        # 1. Short direct answer → chat bubble only
+                        response_chunks.append(chat_answer)
+                        yield "data: " + json.dumps({"chunk": chat_answer}) + "\n\n"
+                        
+                        # 2. Full structured breakdown → References sidebar only
+                        yield "data: " + json.dumps({
+                            "search_results": {
+                                "query": item["query"],
+                                "answer": sidebar_answer,
+                                "results": item["results"]
+                            }
+                        }) + "\n\n"
+                        
+                        # 3. Same short answer → TTS voice engine
                         if use_tts:
-                            await event_queue.put({"type": "tts_sentence", "text": distilled_ans})
-                        response_chunks.append(distilled_ans)
-                        yield "data: " + json.dumps({"chunk": distilled_ans}) + "\n\n"
-                        yield "data: " + json.dumps({"search_results": {"query": item["query"], "answer": distilled_ans, "results": item["results"]}}) + "\n\n"
+                            await event_queue.put({"type": "tts_sentence", "text": chat_answer})
                     elif item["type"] == "token":
                         response_chunks.append(item["text"])
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
@@ -329,14 +494,29 @@ async def post_stream_endpoint(payload: ChatPayload):
                             await event_queue.put({"type": "chunk", "text": chunk})
                             if use_tts:
                                 sentence_buffer += chunk
-                                match = re.search(r'(?<=[.!?])\s+', sentence_buffer)
+                                # Clean completed think blocks
+                                sentence_buffer = re.sub(r'<think>.*?</think>', '', sentence_buffer, flags=re.DOTALL)
+                                
+                                active_buffer = sentence_buffer
+                                if "<think>" in active_buffer:
+                                    active_buffer = active_buffer.split("<think>")[0]
+                                    
+                                match = re.search(r'(?<=[.!?])\s+', active_buffer)
                                 if match:
-                                    sentence = sentence_buffer[:match.end()].strip()
+                                    sentence = active_buffer[:match.end()].strip()
                                     sentence_buffer = sentence_buffer[match.end():]
                                     if sentence:
-                                        await event_queue.put({"type": "tts_sentence", "text": sentence})
+                                        clean_sentence = re.sub(r'<think>.*?</think>', '', sentence, flags=re.DOTALL)
+                                        clean_sentence = clean_sentence.replace("*", "").replace("#", "").strip()
+                                        if clean_sentence:
+                                            await event_queue.put({"type": "tts_sentence", "text": clean_sentence})
                         if use_tts and sentence_buffer.strip():
-                            await event_queue.put({"type": "tts_sentence", "text": sentence_buffer.strip()})
+                            final_text = re.sub(r'<think>.*?</think>', '', sentence_buffer, flags=re.DOTALL)
+                            if "<think>" in final_text:
+                                final_text = final_text.split("<think>")[0]
+                            final_text = final_text.replace("*", "").replace("#", "").strip()
+                            if final_text:
+                                await event_queue.put({"type": "tts_sentence", "text": final_text})
                     except Exception as e:
                         await event_queue.put({"type": "error", "text": str(e)})
                     finally:
@@ -353,10 +533,14 @@ async def post_stream_endpoint(payload: ChatPayload):
                 ai_done = False
                 active_tts_tasks = 0
 
-                while not (ai_done and active_tts_tasks == 0):
+                while True:
                     item = await event_queue.get()
                     if item.get("type") == "done":
-                        break
+                        if active_tts_tasks == 0 and event_queue.empty():
+                            break
+                        else:
+                            await event_queue.put({"type": "done"})
+                            await asyncio.sleep(0.02)
                     elif item["type"] == "_ai_done":
                         ai_done = True
                     elif item["type"] == "chunk":

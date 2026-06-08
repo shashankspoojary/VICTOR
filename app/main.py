@@ -102,13 +102,21 @@ async def _dual_distill(raw_text: str, query: str) -> tuple:
         {
             "role": "system",
             "content": (
-                "You are VICTOR's data purification engine. "
+                "You are VICTOR's data purification engine.\n"
                 "Given raw search results, return a JSON object with exactly two fields:\n"
                 "1. \"chat\": One plain-text sentence (max 25 words) giving the direct answer. "
                 "No markdown, no asterisks, no tables.\n"
                 "2. \"sidebar\": A clean structured markdown summary (max 150 words). "
                 "Use bold for key values, a small table for comparisons, or bullets for lists. "
-                "Strip all website boilerplate, ads, and SEO noise.\n"
+                "Strip all website boilerplate, ads, and SEO noise.\n\n"
+                "CRITICAL INSTRUCTIONS FOR ACCURACY:\n"
+                "- Compare all sources to find the most current and consistent value.\n"
+                "- If some sources list outdated values (e.g., old currency exchange rates like 84.27 INR) "
+                "and authoritative live financial sources (like Xe, Wise) list a newer live rate or show a much higher recent "
+                "range, recognize that the older value is outdated. Report the accurate current rate.\n"
+                "- Do not hallucinate or repeat a single number for all sources. Ensure each source's values listed in "
+                "any table or summary match exactly what that source reported in the snippet. If a snippet does not "
+                "mention a specific rate or value, do not attribute another source's value to it.\n"
                 "Return ONLY valid JSON — no extra text outside the JSON object."
             )
         },
@@ -307,11 +315,87 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+def extract_text_from_file(file_name: str, file_type: str, file_data_base64: str) -> str:
+    """Extract text content from various file types uploaded in base64 format."""
+    if not file_data_base64:
+        return ""
+    try:
+        if "," in file_data_base64:
+            file_data_base64 = file_data_base64.split(",")[1]
+        import base64
+        import io
+        from pathlib import Path
+        file_bytes = base64.b64decode(file_data_base64)
+        ext = Path(file_name).suffix.lower()
+        if len(file_bytes) > 10 * 1024 * 1024:
+            return f"[File {file_name} is too large to extract text (limit: 10MB)]"
+            
+        if ext == ".pdf":
+            try:
+                import fitz
+                doc = fitz.open(stream=file_bytes, filetype="pdf")
+                text = ""
+                for page in doc:
+                    text += page.get_text()
+                return text[:100000]
+            except Exception:
+                try:
+                    import pypdf
+                    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+                    text = ""
+                    for page in reader.pages:
+                        text += page.extract_text() or ""
+                    return text[:100000]
+                except Exception as e2:
+                    return f"[Error parsing PDF: {e2}]"
+        elif ext == ".docx":
+            try:
+                import docx
+                doc = docx.Document(io.BytesIO(file_bytes))
+                text = []
+                for paragraph in doc.paragraphs:
+                    text.append(paragraph.text)
+                return "\n".join(text)[:100000]
+            except Exception as e:
+                return f"[Error parsing Word Document: {e}]"
+        elif ext in (".xlsx", ".xls"):
+            try:
+                import pandas as pd
+                df = pd.read_excel(io.BytesIO(file_bytes))
+                return df.to_string()[:100000]
+            except Exception as e:
+                return f"[Error parsing Excel: {e}]"
+        else:
+            try:
+                text = file_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    text = file_bytes.decode("latin-1")
+                except Exception as e:
+                    return f"[Binary file '{file_name}' of size {len(file_bytes)} bytes, not readable as text]"
+            return text[:100000]
+    except Exception as e:
+        return f"[Failed to parse file '{file_name}': {str(e)}]"
+
 @app.post("/chat/victor/stream")
 async def post_stream_endpoint(payload: ChatPayload):
     prompt = payload.message  # Map payload.message directly to our internal prompt execution logic
     session_id = payload.session_id or "default"
     use_tts = payload.tts or False
+
+    # Process and extract text from non-image uploaded files
+    file_context = ""
+    if payload.files:
+        for file_info in payload.files:
+            file_type = file_info.get("type", "")
+            file_name = file_info.get("name", "")
+            file_data = file_info.get("data", "")
+            if not file_type.startswith("image/") and file_data:
+                extracted = extract_text_from_file(file_name, file_type, file_data)
+                if extracted:
+                    file_context += f"\n\n--- Start of File: {file_name} ---\n{extracted}\n--- End of File: {file_name} ---\n"
+    if file_context:
+        prompt = f"{prompt}\n{file_context}"
 
     async def event_generator():
         is_thinking = False

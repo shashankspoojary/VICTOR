@@ -1,5 +1,6 @@
 import os
 import json
+import datetime
 from pathlib import Path
 import config
 
@@ -44,19 +45,34 @@ class MemoryService:
         except Exception as e:
             context_parts.append(f"\n[Error reading learning data: {e}]")
 
-        # 3. Read last 10 conversational entries for the active session
+        # 3. Read last 10 conversational entries across all session files (newest files first)
         try:
-            chat_file = self.chats_dir / f"{session_id}.json"
-            if chat_file.exists():
-                with open(chat_file, "r", encoding="utf-8") as f:
-                    chat_data = json.load(f)
-                    
-                recent_chats = chat_data[-10:] if len(chat_data) > 10 else chat_data
-                if recent_chats:
-                    context_parts.append("\n[Recent Conversation History]")
-                    for entry in recent_chats:
-                        context_parts.append(f"User: {entry.get('user', '')}")
-                        context_parts.append(f"Assistant: {entry.get('assistant', '')}")
+            # Glob all .json files in the chats directory
+            chat_files = list(self.chats_dir.glob("*.json"))
+            # Sort by filesystem modification time (newest first)
+            chat_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            
+            recent_chats = []
+            for chat_file in chat_files:
+                if len(recent_chats) >= 10:
+                    break
+                try:
+                    with open(chat_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            needed = 10 - len(recent_chats)
+                            items = data[-needed:] if len(data) > needed else data
+                            recent_chats = items + recent_chats
+                        elif isinstance(data, dict):
+                            recent_chats.insert(0, data)
+                except Exception as e:
+                    print(f"Error reading chat file {chat_file.name}: {e}")
+
+            if recent_chats:
+                context_parts.append("\n[Recent Conversation History]")
+                for entry in recent_chats:
+                    context_parts.append(f"User: {entry.get('user', '')}")
+                    context_parts.append(f"Assistant: {entry.get('assistant', '')}")
         except Exception as e:
             context_parts.append(f"\n[Error reading chat history: {e}]")
 
@@ -64,12 +80,17 @@ class MemoryService:
 
     async def save_interaction(self, session_id: str, user_msg: str, assistant_response: str):
         try:
+            # Ensure the chats directory exists
+            self.chats_dir.mkdir(parents=True, exist_ok=True)
+            
             chat_file = self.chats_dir / f"{session_id}.json"
             chat_data = []
             if chat_file.exists():
                 with open(chat_file, "r", encoding="utf-8") as f:
                     try:
                         chat_data = json.load(f)
+                        if not isinstance(chat_data, list):
+                            chat_data = []
                     except json.JSONDecodeError:
                         pass
             

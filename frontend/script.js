@@ -3,7 +3,7 @@ const API = (typeof window !== 'undefined' && window.location.origin)
     ? window.location.origin
     : 'http://localhost:8000';
 
-let sessionId = null;
+let sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 let currentMode = 'victor';
 let isStreaming = false;
 let isListening = false;
@@ -1509,7 +1509,7 @@ function updatePanelOverlay() {
 }
 
 function setMode(mode) {
-    currentMode = mode || 'jarvis';
+    currentMode = mode || 'victor';
     if (btnVictor) btnVictor.classList.add('active');
     if (modeSlider) modeSlider.classList.remove('center', 'right');
     if (activityToggle) activityToggle.style.display = '';
@@ -1527,7 +1527,7 @@ function newChat() {
         syncOrbClass('idle');
         orb.setQueryType(null);
     }
-    sessionId = null;
+    sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
     if (chatMessages) chatMessages.innerHTML = '';
     chatMessages.appendChild(createWelcome());
     messageInput.value = '';
@@ -1830,7 +1830,7 @@ function addTypingIndicator() {
     body.className = 'msg-body';
     const label = document.createElement('div');
     label.className = 'msg-label';
-    label.textContent = `VICTOR  (${currentMode === 'jarvis' ? 'Jarvis' : currentMode === 'realtime' ? 'Realtime' : 'General'})`;
+    label.textContent = `VICTOR  (${currentMode === 'victor' ? 'VICTOR' : currentMode === 'realtime' ? 'Realtime' : 'General'})`;
     const content = document.createElement('div');
     content.className = 'msg-content';
     // Animated pulsing dots — visible immediately on Enter

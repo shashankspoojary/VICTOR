@@ -289,13 +289,11 @@ async def post_stream_endpoint(payload: ChatPayload):
 
                 async def execute_tasks():
                     try:
-                        plan = await brain_service.classify_and_plan(prompt, context)
-                        await task_executor.execute_plan(plan, event_queue)
+                        await task_executor.execute_plan(plan.execution_plan, event_queue)
                     except Exception as e:
-                        print(f"Execution breakdown: {e}")
+                        await event_queue.put({"type": "error", "text": str(e)})
                     finally:
-                        # CRITICAL: Push the definitive end-of-stream signal to release the queue loop listener
-                        await event_queue.put({"type": "done"})
+                        await event_queue.put({"type": "_exec_done"})
 
                 asyncio.create_task(consume_ai_stream())
                 asyncio.create_task(execute_tasks())
@@ -305,9 +303,6 @@ async def post_stream_endpoint(payload: ChatPayload):
                 
                 while not (ai_done and exec_done):
                     item = await event_queue.get()
-                    if item.get("type") == "done":
-                        yield "data: " + json.dumps({"done": True}) + "\n\n"
-                        break
                     if item["type"] == "_ai_done":
                         ai_done = True
                     elif item["type"] == "_exec_done":

@@ -12,6 +12,10 @@ console = Console()
 
 class TaskExecutor:
     async def execute_plan(self, plan: List[str], event_queue: asyncio.Queue = None):
+        if hasattr(plan, "execution_plan"):
+            plan = plan.execution_plan
+        elif isinstance(plan, dict) and "execution_plan" in plan:
+            plan = plan["execution_plan"]
         for step in plan:
             if event_queue:
                 await event_queue.put({"type": "task_status", "step": step, "status": "running"})

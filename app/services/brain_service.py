@@ -8,7 +8,10 @@ console = Console()
 
 class BrainService:
     async def classify_and_plan(self, user_input: str, session_id: str = "default") -> ExecutionPlan:
-        memory_context = await memory_service.get_context(session_id)
+        if isinstance(session_id, str) and ("\n" in session_id or "---" in session_id):
+            memory_context = session_id
+        else:
+            memory_context = await memory_service.get_context(session_id)
         
         system_prompt = f"""You are VICTOR's cognitive router and Brain service.
 Your job is to analyze the user input and return a cleanly structured JSON block parsing the core intent and a step-by-step execution plan.

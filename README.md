@@ -7,46 +7,52 @@ VICTOR is a state-of-the-art, voice-enabled, vision-capable AI tactical assistan
 ## 🌟 Key Features
 
 ### 🧠 1. Cognitive Router & Execution Planner
-- **Intent Classification**: Evaluates queries to route them to `chat`, `research`, `vision`, or `task`.
-- **Plan Decomposition**: Splits multi-task commands (e.g., *"Open notepad, set volume to 50%, and check the weather in Berlin"*) into individual execution steps.
-- **Memory Memorization**: Saves custom facts and user preferences dynamically (e.g., *"remember that my favorite color is crimson"*).
+- **Intent Classification**: Evaluates user queries and routes them to four primary pipelines: `chat`, `research`, `vision`, or `task`.
+- **Plan Decomposition**: Intelligently splits multi-task instructions (e.g., *"Open notepad, set volume to 50%, and check the weather in Berlin"*) into sequential execution lists.
+- **Memory Memorization**: Dynamically records user preferences, titles, names, and customized details into a local database (e.g., *"remember that my favorite color is crimson"*).
+- **Multi-Session Context Stitching**: Scans all active and historical chat session files (ordered by modification time) to assemble a rolling history of the last 10 interactions for unified contextual awareness.
 
 ### 🖥️ 2. OS & Window Control
-- **Volume & Brightness**: Increase, decrease, set to specific values, mute/unmute.
-- **Window Management**: Minimize, maximize, close windows/apps, Alt-Tab toggle, toggle full screen, show desktop.
-- **System Launchers**: Launch built-in tools (Task Manager, Settings, Run, File Explorer) or custom applications.
-- **Power Utilities**: Screen locking, display sleep, system restart, and shutdown.
-- **Wi-Fi & Theme Toggles**: Connect/disconnect adapters and toggle Windows system themes (Dark/Light mode).
+- **Volume & Brightness**: Seamlessly increases, decreases, mutes/unmutes, or sets system volume and brightness to exact percentages.
+- **Window Management**: Minimizes, maximizes, toggles full screen, shows desktop, closes windows or specific applications, and cycles active programs.
+- **Smart System Launchers**: Normalizes and opens over 20 preconfigured applications (Chrome, Brave, VS Code, Telegram, WhatsApp, Spotify, Settings, etc.) using system executables, protocol URIs, or PyAutoGUI keystroke fallbacks.
+- **Power Utilities**: Handles system lock, screen display sleep, system reboot, and system shutdown commands.
+- **Wi-Fi & Theme Toggles**: Toggles Wi-Fi adapters and switches between Windows Light and Dark system themes.
+- **Keystroke & Clipboard Simulation**: Translates requests for basic editing tasks (Select All, Copy, Cut, Paste, Undo, Redo, Save, Enter, Escape) into simulated key events.
 
 ### 📂 3. Desktop Management
-- **Desktop Organizing**: Categorizes desktop files automatically into descriptive folders (Images, Documents, Videos, Code, Executables, etc.).
-- **Desktop Cleaning**: Archives non-link items into a dated desktop folder.
-- **Desktop Stats & Lists**: Analyzes total file count, directories, and disk space usage.
-- **Wallpaper Control**: Set background wallpaper dynamically using any web URL or local path.
+- **Desktop Organizing**: Automatically categorizes files on the Windows Desktop into designated folders (`Images`, `Documents`, `Videos`, `Music`, `Archives`, `Code`, `Executables`, `Others`) based on file extension while preserving `.lnk` and `.url` shortcuts.
+- **Desktop Cleaning**: Safely archives clutter by moving non-link desktop files into a dated archive directory (`Desktop Archive YYYY-MM-DD`).
+- **Desktop Stats & Listing**: Inspects and lists all files/folders on the desktop and computes the total disk space occupied.
+- **Wallpaper Engine**: Updates the Windows desktop background using a local path or a web image URL (with automatic conversion of `.webp`/`.png` to `.bmp` via PIL).
 
-### 🌐 4. Web Browser & Media Automation
+### ⏰ 4. Native OS Scheduler & Reminders
+- **Native Task Scheduling**: Schedules one-time events or custom alerts using the native Windows Task Scheduler (`schtasks`) from natural language queries (e.g., *"remind me to call John in 15 minutes"*).
+- **System Notification Alerts**: Triggers a system beep audio cue (`winsound`) and a native Windows message alert box (`MessageBoxW`) when scheduled tasks are fired.
+
+### 🌐 5. Web Browser & Media Automation
 - **Direct Navigation**: Opens custom websites, handles domain aliases, and performs web actions.
-- **Browser Navigation**: Next/previous tab, close tab, go back/forward, zoom controls, scroll up/down, reload page.
-- **YouTube Playback**: Directly searches for and plays videos/music on YouTube, bypassing search results when direct links are resolved.
+- **Tab & Navigation Controls**: Controls tabs (new tab, close tab, next tab, previous tab), page history (back/forward), refresh, zoom controls, and page scrolling.
+- **YouTube Playback Automation**: Resolves direct URLs or searches and plays YouTube content directly, bypassing standard search results.
 
-### 🔍 5. Real-Time Web Research
+### 🔍 6. Real-Time Web Research & Data Verification
 - **Web Search**: Integrates Tavily API for fast, reliable search query execution.
-- **Dual-Distillation**: Performs a single LLM request to generate two outputs:
-  1. A direct, concise conversational response (max 25 words) for TTS and chat bubbles.
-  2. A structured markdown sidebar breakdown (max 150 words) displaying clean tables, links, and key facts.
+- **Dual-Distillation**: Performs a single LLM request to generate a concise, 25-word summary (ideal for Text-To-Speech) and a detailed 150-word markdown sidebar breakdown with comparative tables and citation links.
+- **Data & Currency Accuracy Engine**: Cross-references query results to reject outdated estimates (e.g., stale currency exchange rates) in favor of authoritative live values, ensuring strict data consistency without hallucination.
 
-### 👁️ 6. Computer Vision
-- **Image Analysis**: Uses Groq-powered Vision Language Models to analyze uploaded images or local webcam snapshots.
+### 👁️ 7. Computer Vision
+- **Image Analysis**: Uses Groq-powered Vision Language Models to analyze uploaded images or webcam snapshots.
 - **Prompt Interaction**: Ask questions directly about the image (e.g. *"What do you see?"*, *"What color is this?"*).
 
-### 🎙️ 7. High-Fidelity Voice Output (TTS)
+### 🎙️ 8. High-Fidelity Voice Output (TTS)
 - **Scrubbing Engine**: Cleans LLM outputs of thinking blocks (`<think>...</think>`), tables, markdown symbols, and emojis before synthesis.
 - **Real-Time Streaming**: Uses `edge-tts` to stream audio bytes directly to the frontend.
 
-### 📁 8. File Understanding & Reading Engine
+### 📁 9. File Understanding & Reading Engine
 - **Text & Code Files**: Parses plain text, Python, JavaScript, HTML, CSS, JSON, etc.
-- **Office & Document Formats**: Extracts text from Word documents (`.docx`), Excel spreadsheets (`.xlsx`), and PDF documents (`.pdf`) using pre-installed document parsers.
-- **Context Injection**: Intelligently appends extracted file contents to the user prompt context, enabling the Cognitive Router and AI completion streams to seamlessly explain, summarize, or analyze files.
+- **Office & Document Formats**: Extracts text from Word documents (`.docx`), Excel spreadsheets (`.xlsx`/`.xls`), and PDF documents (`.pdf`) using pre-installed document parsers (supporting fallbacks like `fitz`/`pypdf`).
+- **Context Injection**: Intelligently appends extracted file contents (up to a 100k character limit to prevent token overflow) to the user prompt context, enabling the Cognitive Router and AI completion streams to seamlessly explain, summarize, or analyze files.
+- **Auto-Chat Routing**: Detects file uploads and routes them directly to chat mode instead of misclassifying them as research queries.
 
 ---
 

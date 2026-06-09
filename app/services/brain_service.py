@@ -1,4 +1,5 @@
 import json
+import config
 from app.models import ExecutionPlan
 from app.services.ai_service import ai_service
 from app.services.memory_service import memory_service
@@ -7,11 +8,27 @@ from rich.console import Console
 console = Console()
 
 class BrainService:
+    def _prune_context(self, context: str, max_chars: int = 12000) -> str:
+        if not context or len(context) <= max_chars:
+            return context
+        
+        # Keep 30% from the start and 70% from the end to prioritize recent history/data
+        keep_start = int(max_chars * 0.3)
+        keep_end = max_chars - keep_start - 100 # safety margin and truncation message
+        
+        start_part = context[:keep_start]
+        end_part = context[-keep_end:]
+        
+        return f"{start_part}\n\n... [TRUNCATED FOR CONTEXT LIMITS] ...\n\n{end_part}"
+
     async def classify_and_plan(self, user_input: str, session_id: str = "default") -> ExecutionPlan:
         if isinstance(session_id, str) and ("\n" in session_id or "---" in session_id):
             memory_context = session_id
         else:
             memory_context = await memory_service.get_context(session_id)
+        
+        # Token Pruning: slice incoming memory_context to prevent overflow
+        memory_context = self._prune_context(memory_context)
         
         system_prompt = f"""You are VICTOR's cognitive router and Brain service.
 Your job is to analyze the user input and return a cleanly structured JSON block parsing the core intent and a step-by-step execution plan.
@@ -48,6 +65,9 @@ You support the following automated OS and browser control tasks:
     - Snap window layout: `Window action: snap_left` or `Window action: snap_right`
     - Set desktop wallpaper: `System utility: set_wallpaper_url url='<url>'`
     - Custom desktop layout organization: `Desktop management: organize mode='by_type'` or `Desktop management: organize mode='by_date'`
+16. Standalone File Manipulation: standalone file manipulation tasks—including terms like "Archive files", "Zip items", "Compress data", or "Clean up directory".
+
+CRITICAL: Standalone file manipulation tasks—including terms like "Archive files", "Zip items", "Compress data", or "Clean up directory"—must strictly be categorized under the `task` intent and structured as operational execution steps, rather than falling back into web `research` mode.
 
 If the user request matches any of these, set the intent to 'task' and write a clear step in 'execution_plan'.
 If the user request asks a question requiring real-time info, web search, current facts, or research (e.g., 'what is the value of one dollar in rupees?', 'who won the match yesterday?'), set the intent to 'research' and populate the 'execution_plan' with a step search query (e.g., 'Search for <query>').
@@ -70,7 +90,7 @@ Return ONLY valid JSON matching this schema:
         try:
             response_text = await ai_service.get_chat_completion(
                 messages=messages,
-                model="llama-3.1-8b-instant",
+                model=config.GROQ_MODEL,
                 response_format={"type": "json_object"},
                 temperature=0.1
             )

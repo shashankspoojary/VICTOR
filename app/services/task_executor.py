@@ -632,11 +632,17 @@ class TaskExecutor:
                     await event_queue.put({"type": "token", "text": "pyautogui is not installed, Sir."})
         elif action == "volume_mute":
             success = False
-            if pycaw and comtypes:
-                success = set_win_mute_com(True)
+            try:
+                if pycaw and comtypes:
+                    success = set_win_mute_com(True)
+            except Exception as e:
+                console.print(f"[yellow]COM mute call failed: {e}[/yellow]")
             if not success and pyautogui:
-                pyautogui.press("volumemute")
-                success = True
+                try:
+                    pyautogui.press("volumemute")
+                    success = True
+                except Exception:
+                    pass
             if event_queue:
                 if success:
                     await event_queue.put({"type": "token", "text": "Muting the volume, Sir."})
@@ -644,11 +650,17 @@ class TaskExecutor:
                     await event_queue.put({"type": "token", "text": "Failed to mute volume, Sir."})
         elif action == "volume_unmute":
             success = False
-            if pycaw and comtypes:
-                success = set_win_mute_com(False)
+            try:
+                if pycaw and comtypes:
+                    success = set_win_mute_com(False)
+            except Exception as e:
+                console.print(f"[yellow]COM unmute call failed: {e}[/yellow]")
             if not success and pyautogui:
-                pyautogui.press("volumemute")
-                success = True
+                try:
+                    pyautogui.press("volumemute")
+                    success = True
+                except Exception:
+                    pass
             if event_queue:
                 if success:
                     await event_queue.put({"type": "token", "text": "Unmuting the volume, Sir."})
@@ -657,18 +669,41 @@ class TaskExecutor:
         elif action == "volume_set":
             val = primitive.get("value", 50)
             success = False
-            if pycaw and comtypes:
-                success = set_win_volume_com(val)
+            try:
+                if pycaw and comtypes:
+                    success = set_win_volume_com(val)
+            except Exception as e:
+                console.print(f"[yellow]COM volume set call failed: {e}[/yellow]")
             if not success:
                 if pyautogui:
-                    old_pause = pyautogui.PAUSE
-                    pyautogui.PAUSE = 0.002
-                    for _ in range(50):
-                        pyautogui.press("volumedown")
-                    for _ in range(val // 2):
-                        pyautogui.press("volumeup")
-                    pyautogui.PAUSE = old_pause
-                    success = True
+                    try:
+                        current_vol = None
+                        try:
+                            if pycaw and comtypes:
+                                current_vol = get_win_volume_com()
+                        except Exception:
+                            pass
+                        
+                        old_pause = pyautogui.PAUSE
+                        pyautogui.PAUSE = 0.002
+                        if current_vol is not None:
+                            delta = val - current_vol
+                            if delta > 0:
+                                for _ in range(max(1, delta // 2)):
+                                    pyautogui.press("volumeup")
+                            elif delta < 0:
+                                for _ in range(max(1, abs(delta) // 2)):
+                                    pyautogui.press("volumedown")
+                        else:
+                            for _ in range(50):
+                                pyautogui.press("volumedown")
+                            for _ in range(val // 2):
+                                pyautogui.press("volumeup")
+                        pyautogui.PAUSE = old_pause
+                        success = True
+                    except Exception as fallback_e:
+                        console.print(f"[yellow]pyautogui volume set fallback failed: {fallback_e}[/yellow]")
+                        success = False
             if event_queue:
                 if success:
                     await event_queue.put({"type": "token", "text": f"Volume has been set to {val} percent, Sir."})
@@ -1346,10 +1381,11 @@ class TaskExecutor:
             # Layer 4: Fallback — type app name into Windows Start Menu search
             if not launched and pyautogui:
                 try:
+                    # Enforce clear keystroke spacing to let Windows search index apps reliably
                     pyautogui.press("win")
                     time.sleep(0.5)
-                    pyautogui.write(app_name, interval=0.02)
-                    time.sleep(0.5)
+                    pyautogui.write(app_name, interval=0.03)
+                    time.sleep(0.6)
                     pyautogui.press("enter")
                     launched = True
                 except Exception:
@@ -1558,17 +1594,22 @@ def get_browser_profile_path(browser_name: str) -> str:
     appdata = os.environ.get("APPDATA", "")
     
     paths = {
-        "chrome": os.path.join(local_appdata, r"Google\Chrome\User Data"),
-        "brave": os.path.join(local_appdata, r"BraveSoftware\Brave-Browser\User Data"),
-        "edge": os.path.join(local_appdata, r"Microsoft\Edge\User Data"),
+        "chrome": os.path.join(local_appdata, r"Google\Chrome\User Data\VictorAutomation"),
+        "brave": os.path.join(local_appdata, r"BraveSoftware\Brave-Browser\User Data\VictorAutomation"),
+        "edge": os.path.join(local_appdata, r"Microsoft\Edge\User Data\VictorAutomation"),
         "opera": os.path.join(appdata, r"Opera Software\Opera Stable"),
         "firefox": os.path.join(appdata, r"Mozilla\Firefox\Profiles"),
     }
     
     target = browser_name.lower().strip()
     profile_path = paths.get(target)
-    if profile_path and os.path.exists(profile_path):
-        return profile_path
+    
+    if profile_path:
+        base_path = profile_path
+        if target in ("chrome", "brave", "edge"):
+            base_path = os.path.dirname(profile_path)
+        if os.path.exists(base_path):
+            return profile_path
         
     fallback_root = Path.home() / ".jarvis_profiles"
     fallback_root.mkdir(parents=True, exist_ok=True)
@@ -1980,6 +2021,27 @@ def set_win_volume_com(percent: int) -> bool:
     except Exception as e:
         console.print(f"[yellow]COM Volume control failed: {e}[/yellow]")
         return False
+    finally:
+        try:
+            comtypes.CoUninitialize()
+        except Exception:
+            pass
+
+def get_win_volume_com() -> int:
+    if not pycaw or not comtypes:
+        return None
+    try:
+        comtypes.CoInitialize()
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.Activate(
+            IAudioEndpointVolume._iid_, comtypes.CLSCTX_ALL, None
+        )
+        volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
+        current_val = volume.GetMasterVolumeLevelScalar()
+        return int(round(current_val * 100))
+    except Exception as e:
+        console.print(f"[yellow]COM Volume query failed: {e}[/yellow]")
+        return None
     finally:
         try:
             comtypes.CoUninitialize()

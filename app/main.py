@@ -254,6 +254,8 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                     elif item["type"] == "token":
                         response_chunks.append(item["text"])
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
+                        if use_tts and item["text"].strip():
+                            await event_queue.put({"type": "tts_sentence", "text": item["text"]})
                     elif item["type"] == "error":
                         yield "data: " + json.dumps({"error": item["text"]}) + "\n\n"
                         
@@ -282,7 +284,13 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                         if "<think>" in active_buffer:
                             active_buffer = active_buffer.split("<think>")[0]
                             
-                        match = re.search(r'(?<=[.!?])\s+', active_buffer)
+                        match = re.search(
+                            r'(?<!\d\.)(?<!\d\!)(?<!\d\?)'
+                            r'(?<!\b[a-zA-Z]\.)'
+                            r'(?<!\b[dD][rR]\.)(?<!\b[mM][rR]\.)(?<!\b[mM][rR][sS]\.)'
+                            r'(?<=[.!?])\s+|\n+', 
+                            active_buffer
+                        )
                         if match:
                             sentence = active_buffer[:match.end()].strip()
                             sentence_buffer = sentence_buffer[match.end():]
@@ -556,6 +564,8 @@ async def post_stream_endpoint(payload: ChatPayload):
                     elif item["type"] == "token":
                         response_chunks.append(item["text"])
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
+                        if use_tts and item["text"].strip():
+                            await event_queue.put({"type": "tts_sentence", "text": item["text"]})
                     elif item["type"] == "error":
                         yield "data: " + json.dumps({"error": item["text"]}) + "\n\n"
                         
@@ -585,7 +595,13 @@ async def post_stream_endpoint(payload: ChatPayload):
                                 if "<think>" in active_buffer:
                                     active_buffer = active_buffer.split("<think>")[0]
                                     
-                                match = re.search(r'(?<=[.!?])\s+', active_buffer)
+                                match = re.search(
+                                    r'(?<!\d\.)(?<!\d\!)(?<!\d\?)'
+                                    r'(?<!\b[a-zA-Z]\.)'
+                                    r'(?<!\b[dD][rR]\.)(?<!\b[mM][rR]\.)(?<!\b[mM][rR][sS]\.)'
+                                    r'(?<=[.!?])\s+|\n+', 
+                                    active_buffer
+                                )
                                 if match:
                                     sentence = active_buffer[:match.end()].strip()
                                     sentence_buffer = sentence_buffer[match.end():]

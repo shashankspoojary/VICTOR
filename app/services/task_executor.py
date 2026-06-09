@@ -2,6 +2,8 @@ import asyncio
 import json
 import webbrowser
 import re
+import math
+import threading
 from typing import List
 from rich.console import Console
 from app.services.realtime_service import realtime_service
@@ -14,15 +16,40 @@ import shutil
 from urllib.parse import quote_plus
 from pathlib import Path
 
+import time
+
 try:
     import pyautogui
 except ImportError:
     pyautogui = None
 
 try:
+    import pyperclip
+except ImportError:
+    pyperclip = None
+
+try:
     import ctypes
 except ImportError:
     ctypes = None
+
+try:
+    import comtypes
+except ImportError:
+    comtypes = None
+
+try:
+    import pycaw
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+except ImportError:
+    pycaw = None
+    AudioUtilities = None
+    IAudioEndpointVolume = None
+
+try:
+    from playwright.async_api import async_playwright
+except ImportError:
+    async_playwright = None
 
 console = Console()
 
@@ -85,6 +112,20 @@ class TaskExecutor:
             if event_queue:
                 await event_queue.put({"type": "task_status", "step": step, "status": "completed"})
 
+    def _activate_window(self, title: str):
+        clean_title = title.replace(".exe", "").capitalize()
+        for t in (title, clean_title):
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-Command", 
+                     f'(New-Object -ComObject WScript.Shell).AppActivate("{t}")'],
+                    capture_output=True,
+                    timeout=5
+                )
+            except Exception:
+                pass
+        time.sleep(0.5)
+
     def _parse_reminder(self, step: str):
         s = step.lower().strip()
         now = datetime.datetime.now()
@@ -146,6 +187,80 @@ class TaskExecutor:
         """Rule-based step translator — no AI call needed for standard actions."""
         s = step.strip().lower()
 
+        # --- Persistent Browser Actions ---
+        if s.startswith("browser action:"):
+            rest = step[len("browser action:"):].strip()
+            parts = rest.split(None, 1)
+            subcmd = parts[0].lower() if parts else ""
+            if subcmd == "switch":
+                target_m = re.search(r"target=['\"]([^'\"]+)['\"]", rest)
+                target = target_m.group(1) if target_m else "chrome"
+                return {"action": "browser_switch", "target": target}
+            elif subcmd == "list_browsers":
+                return {"action": "browser_list"}
+            elif subcmd == "go_to":
+                url_m = re.search(r"url=['\"]([^'\"]+)['\"]", rest)
+                url = url_m.group(1) if url_m else ""
+                return {"action": "browser_go_to", "url": url}
+            elif subcmd == "search":
+                query_m = re.search(r"query=['\"]([^'\"]+)['\"]", rest)
+                engine_m = re.search(r"engine=['\"]([^'\"]+)['\"]", rest)
+                query = query_m.group(1) if query_m else ""
+                engine = engine_m.group(1) if engine_m else "google"
+                return {"action": "browser_search", "query": query, "engine": engine}
+            elif subcmd == "smart_click":
+                desc_m = re.search(r"description=['\"]([^'\"]+)['\"]", rest)
+                desc = desc_m.group(1) if desc_m else ""
+                return {"action": "browser_smart_click", "description": desc}
+            elif subcmd == "smart_type":
+                desc_m = re.search(r"description=['\"]([^'\"]+)['\"]", rest)
+                text_m = re.search(r"text=['\"]([^'\"]+)['\"]", rest)
+                desc = desc_m.group(1) if desc_m else ""
+                text = text_m.group(1) if text_m else ""
+                return {"action": "browser_smart_type", "description": desc, "text": text}
+            elif subcmd == "close_tab":
+                return {"action": "browser_close_tab"}
+            elif subcmd == "new_tab":
+                return {"action": "browser_new_tab"}
+
+        # --- Automated Messenger Routes ---
+        if s.startswith("send message:"):
+            rest = step[len("send message:"):].strip()
+            platform_m = re.search(r"platform=['\"]([^'\"]+)['\"]", rest)
+            receiver_m = re.search(r"receiver=['\"]([^'\"]+)['\"]", rest)
+            text_m = re.search(r"text=['\"]([^'\"]+)['\"]", rest)
+            platform = platform_m.group(1) if platform_m else ""
+            receiver = receiver_m.group(1) if receiver_m else ""
+            text = text_m.group(1) if text_m else ""
+            return {"action": "send_message", "platform": platform, "receiver": receiver, "text": text}
+
+        # --- Grid Layout Snapping ---
+        if s.startswith("window action:"):
+            rest = step[len("window action:"):].strip()
+            if "snap_left" in rest:
+                return {"action": "snap_left"}
+            elif "snap_right" in rest:
+                return {"action": "snap_right"}
+        if "snap left" in s or "snap window left" in s:
+            return {"action": "snap_left"}
+        if "snap right" in s or "snap window right" in s:
+            return {"action": "snap_right"}
+
+        # --- Wallpaper & Desktop ---
+        if s.startswith("system utility:"):
+            rest = step[len("system utility:"):].strip()
+            if "set_wallpaper_url" in rest:
+                url_m = re.search(r"url=['\"]([^'\"]+)['\"]", rest)
+                url = url_m.group(1) if url_m else ""
+                return {"action": "set_wallpaper_url", "url": url}
+
+        if s.startswith("desktop management:"):
+            rest = step[len("desktop management:"):].strip()
+            if "organize" in rest:
+                mode_m = re.search(r"mode=['\"]([^'\"]+)['\"]", rest)
+                mode = mode_m.group(1) if mode_m else "by_type"
+                return {"action": "organize_desktop_mode", "mode": mode}
+
         # --- Memorize ---
         if s.startswith("memorize"):
             # Expected format: "Memorize key 'X' with value 'Y'"
@@ -169,7 +284,7 @@ class TaskExecutor:
             city = re.sub(r'\s+', ' ', city).strip(" ,.-'\"")
             return {"action": "weather_report", "city": city or "Mumbai"}
 
-        # --- Wallpaper & Desktop ---
+        # --- Wallpaper & Desktop General ---
         if "wallpaper" in s:
             url_match = re.search(r'https?://[^\s]+', step)
             if url_match:
@@ -185,7 +300,10 @@ class TaskExecutor:
                     return {"action": "set_wallpaper_path", "path": word.strip("'\"")}
 
         if "organize" in s and "desktop" in s:
-            return {"action": "organize_desktop"}
+            mode = "by_type"
+            if "date" in s:
+                mode = "by_date"
+            return {"action": "organize_desktop_mode", "mode": mode}
 
         if "clean" in s and "desktop" in s:
             return {"action": "clean_desktop"}
@@ -195,6 +313,51 @@ class TaskExecutor:
 
         if "stats" in s and "desktop" in s:
             return {"action": "desktop_stats"}
+        # --- Type Text / Smart Typing (from Mark-XL) ---
+        type_in_app_match = re.match(r"^(?:type|write|enter)\s+['\"]?(.+?)['\"]?\s+(?:in|into|on)\s+(?:window\s+)?['\"]?(.+?)['\"]?$", step, re.IGNORECASE)
+        if type_in_app_match:
+            text_to_type = type_in_app_match.group(1).strip()
+            app_target = type_in_app_match.group(2).strip()
+            if text_to_type and app_target:
+                return {"action": "type_in_app", "text": text_to_type, "app": app_target}
+
+        type_match = re.match(r"^type\s+text:\s*['\"]?(.+?)['\"]?\s*$", step, re.IGNORECASE)
+        if not type_match:
+            type_match = re.match(r"^(?:type|write|enter)\s+['\"]?(.+?)['\"]?\s*$", step, re.IGNORECASE)
+        if type_match:
+            text_to_type = type_match.group(1).strip()
+            if text_to_type:
+                return {"action": "type_text", "text": text_to_type}
+
+        # --- Focus Window (from Mark-XL PowerShell strategy) ---
+        focus_match = re.match(r"^focus\s+window:\s*['\"]?(.+?)['\"]?\s*$", step, re.IGNORECASE)
+        if not focus_match:
+            focus_match = re.match(r"^(?:focus|activate|bring|switch\s+to)\s+(?:window\s+)?['\"]?(.+?)['\"]?(?:\s+(?:to\s+(?:the\s+)?(?:front|foreground))|\s+window)?\s*$", step, re.IGNORECASE)
+        if focus_match:
+            window_title = focus_match.group(1).strip()
+            if window_title:
+                return {"action": "focus_window", "title": window_title}
+
+        # --- Coordinate Mouse Actions (from Mark-XL) ---
+        # Drag: "Drag from coordinates: (X1, Y1) to (X2, Y2)"
+        drag_match = re.match(r"^drag\s+(?:from\s+)?(?:coordinates:?\s*)?\(?\s*(\d+)\s*,\s*(\d+)\s*\)?\s*to\s*\(?\s*(\d+)\s*,\s*(\d+)\s*\)?\s*$", step, re.IGNORECASE)
+        if drag_match:
+            return {"action": "drag", "x1": int(drag_match.group(1)), "y1": int(drag_match.group(2)), "x2": int(drag_match.group(3)), "y2": int(drag_match.group(4))}
+
+        # Click / Right click / Double click / Move at coordinates
+        coord_match = re.match(r"^(click|right\s*click|double\s*click|move\s*(?:mouse)?(?:\s*to)?)\s+(?:at\s+)?(?:coordinates:?\s*)?\(?\s*(\d+)\s*,\s*(\d+)\s*\)?\s*$", step, re.IGNORECASE)
+        if coord_match:
+            action_word = coord_match.group(1).lower().strip()
+            cx = int(coord_match.group(2))
+            cy = int(coord_match.group(3))
+            if "right" in action_word:
+                return {"action": "right_click_xy", "x": cx, "y": cy}
+            elif "double" in action_word:
+                return {"action": "double_click_xy", "x": cx, "y": cy}
+            elif "move" in action_word:
+                return {"action": "move_to_xy", "x": cx, "y": cy}
+            else:
+                return {"action": "click_xy", "x": cx, "y": cy}
 
         # --- Volume ---
         if "volume" in s or "mute" in s or "unmute" in s:
@@ -468,36 +631,49 @@ class TaskExecutor:
                 if event_queue:
                     await event_queue.put({"type": "token", "text": "pyautogui is not installed, Sir."})
         elif action == "volume_mute":
-            if pyautogui:
+            success = False
+            if pycaw and comtypes:
+                success = set_win_mute_com(True)
+            if not success and pyautogui:
                 pyautogui.press("volumemute")
-                if event_queue:
+                success = True
+            if event_queue:
+                if success:
                     await event_queue.put({"type": "token", "text": "Muting the volume, Sir."})
-            else:
-                if event_queue:
-                    await event_queue.put({"type": "token", "text": "pyautogui is not installed, Sir."})
+                else:
+                    await event_queue.put({"type": "token", "text": "Failed to mute volume, Sir."})
         elif action == "volume_unmute":
-            if pyautogui:
+            success = False
+            if pycaw and comtypes:
+                success = set_win_mute_com(False)
+            if not success and pyautogui:
                 pyautogui.press("volumemute")
-                if event_queue:
+                success = True
+            if event_queue:
+                if success:
                     await event_queue.put({"type": "token", "text": "Unmuting the volume, Sir."})
-            else:
-                if event_queue:
-                    await event_queue.put({"type": "token", "text": "pyautogui is not installed, Sir."})
+                else:
+                    await event_queue.put({"type": "token", "text": "Failed to unmute volume, Sir."})
         elif action == "volume_set":
             val = primitive.get("value", 50)
-            if pyautogui:
-                old_pause = pyautogui.PAUSE
-                pyautogui.PAUSE = 0.002
-                for _ in range(50):
-                    pyautogui.press("volumedown")
-                for _ in range(val // 2):
-                    pyautogui.press("volumeup")
-                pyautogui.PAUSE = old_pause
-                if event_queue:
+            success = False
+            if pycaw and comtypes:
+                success = set_win_volume_com(val)
+            if not success:
+                if pyautogui:
+                    old_pause = pyautogui.PAUSE
+                    pyautogui.PAUSE = 0.002
+                    for _ in range(50):
+                        pyautogui.press("volumedown")
+                    for _ in range(val // 2):
+                        pyautogui.press("volumeup")
+                    pyautogui.PAUSE = old_pause
+                    success = True
+            if event_queue:
+                if success:
                     await event_queue.put({"type": "token", "text": f"Volume has been set to {val} percent, Sir."})
-            else:
-                if event_queue:
-                    await event_queue.put({"type": "token", "text": "pyautogui is not installed, Sir."})
+                else:
+                    await event_queue.put({"type": "token", "text": "Failed to set volume, Sir."})
 
         # --- Brightness Controls ---
         elif action == "brightness_up":
@@ -744,6 +920,111 @@ class TaskExecutor:
             if pyautogui:
                 pyautogui.press("escape")
 
+        elif action == "type_text":
+            text = primitive.get("text", "")
+            if text:
+                msg = ""
+                if len(text) > 20 and pyperclip and pyautogui:
+                    pyperclip.copy(text)
+                    time.sleep(0.1)
+                    pyautogui.hotkey("ctrl", "v")
+                    msg = f"Typed text via clipboard: '{text[:20]}...'"
+                elif pyautogui:
+                    pyautogui.typewrite(text, interval=0.03)
+                    msg = f"Typed text: '{text[:20]}...'"
+                else:
+                    msg = "pyautogui is not installed, cannot type."
+                if event_queue:
+                    await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "type_in_app":
+            app = primitive.get("app", "")
+            text = primitive.get("text", "")
+            if app and text:
+                self._activate_window(app)
+                msg = ""
+                if len(text) > 20 and pyperclip and pyautogui:
+                    pyperclip.copy(text)
+                    time.sleep(0.1)
+                    pyautogui.hotkey("ctrl", "v")
+                    msg = f"Focused '{app}' and typed text via clipboard: '{text[:20]}...'"
+                elif pyautogui:
+                    pyautogui.typewrite(text, interval=0.03)
+                    msg = f"Focused '{app}' and typed text: '{text[:20]}...'"
+                else:
+                    msg = "pyautogui is not installed, cannot type."
+                if event_queue:
+                    await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "focus_window":
+            title = primitive.get("title", "")
+            if title:
+                self._activate_window(title)
+                msg = f"Focused window: '{title}', Sir."
+            else:
+                msg = "No window title specified to focus, Sir."
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "click_xy":
+            x = primitive.get("x")
+            y = primitive.get("y")
+            if pyautogui and x is not None and y is not None:
+                pyautogui.click(x, y)
+                msg = f"Clicked at coordinates ({x}, {y})."
+            else:
+                msg = "pyautogui not available or coordinates invalid."
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "right_click_xy":
+            x = primitive.get("x")
+            y = primitive.get("y")
+            if pyautogui and x is not None and y is not None:
+                pyautogui.rightClick(x, y)
+                msg = f"Right clicked at coordinates ({x}, {y})."
+            else:
+                msg = "pyautogui not available or coordinates invalid."
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "double_click_xy":
+            x = primitive.get("x")
+            y = primitive.get("y")
+            if pyautogui and x is not None and y is not None:
+                pyautogui.doubleClick(x, y)
+                msg = f"Double clicked at coordinates ({x}, {y})."
+            else:
+                msg = "pyautogui not available or coordinates invalid."
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "move_to_xy":
+            x = primitive.get("x")
+            y = primitive.get("y")
+            if pyautogui and x is not None and y is not None:
+                pyautogui.moveTo(x, y, duration=0.2)
+                msg = f"Moved mouse to coordinates ({x}, {y})."
+            else:
+                msg = "pyautogui not available or coordinates invalid."
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "drag":
+            x1 = primitive.get("x1")
+            y1 = primitive.get("y1")
+            x2 = primitive.get("x2")
+            y2 = primitive.get("y2")
+            if pyautogui and x1 is not None and y1 is not None and x2 is not None and y2 is not None:
+                pyautogui.moveTo(x1, y1)
+                time.sleep(0.1)
+                pyautogui.dragTo(x2, y2, duration=0.5)
+                msg = f"Dragged from ({x1}, {y1}) to ({x2}, {y2})."
+            else:
+                msg = "pyautogui not available or coordinates invalid."
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
         # --- Reminders ---
         elif action == "set_reminder":
             dt = primitive.get("date_time")
@@ -821,7 +1102,8 @@ class TaskExecutor:
             if event_queue:
                 await event_queue.put({"type": "token", "text": desktop_msg})
 
-        elif action == "organize_desktop":
+        elif action in ("organize_desktop", "organize_desktop_mode"):
+            mode = primitive.get("mode", "by_type")
             desktop = Path.home() / "Desktop"
             FILE_TYPE_MAP = {
                 "Images":      {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico"},
@@ -841,20 +1123,32 @@ class TaskExecutor:
                     if item.suffix.lower() in {".lnk", ".url"}:
                         continue
                         
-                    ext = item.suffix.lower()
-                    folder_name = "Others"
-                    for folder, exts in FILE_TYPE_MAP.items():
-                        if ext in exts:
-                            folder_name = folder
-                            break
+                    if mode == "by_date":
+                        try:
+                            mtime = item.stat().st_mtime
+                            dt = datetime.datetime.fromtimestamp(mtime)
+                            folder_name = dt.strftime("%Y-%m")
+                        except Exception:
+                            folder_name = "Others"
+                    else:
+                        ext = item.suffix.lower()
+                        folder_name = "Others"
+                        for folder, exts in FILE_TYPE_MAP.items():
+                            if ext in exts:
+                                folder_name = folder
+                                break
                             
                     target_dir = desktop / folder_name
                     target_dir.mkdir(exist_ok=True)
                     new_path = target_dir / item.name
                     if not new_path.exists():
-                        shutil.move(str(item), str(new_path))
-                        moved += 1
-                desktop_msg = f"Desktop organized: {moved} files categorized, Sir."
+                        try:
+                            shutil.move(str(item), str(new_path))
+                            moved += 1
+                        except Exception as e:
+                            console.print(f"[red]Error organizing desktop item {item.name}: {e}[/red]")
+                            
+                desktop_msg = f"Desktop organized ({mode}): {moved} files categorized, Sir."
             else:
                 desktop_msg = "Desktop folder not found, Sir."
             if event_queue:
@@ -927,37 +1221,95 @@ class TaskExecutor:
             app_name = primitive.get("app_name", "").strip()
             normalized = app_name.lower()
             
+            # Comprehensive app alias dictionary (merged from Mark-XL)
             APP_ALIASES_WIN = {
+                # Browsers
                 "chrome": "chrome",
                 "google chrome": "chrome",
                 "firefox": "firefox",
                 "edge": "msedge",
+                "microsoft edge": "msedge",
                 "brave": "brave",
                 "safari": "msedge",
                 "opera": "opera",
+                # Communication
                 "whatsapp": "WhatsApp",
                 "telegram": "Telegram",
                 "discord": "Discord",
                 "slack": "Slack",
                 "zoom": "Zoom",
                 "teams": "msteams",
+                "microsoft teams": "msteams",
+                "skype": "skype",
+                "signal": "signal",
+                # Media
                 "spotify": "Spotify",
                 "vlc": "vlc",
+                "netflix": "Netflix",
+                "itunes": "iTunes",
+                # Microsoft Office
+                "word": "winword",
+                "microsoft word": "winword",
+                "excel": "excel",
+                "microsoft excel": "excel",
+                "powerpoint": "powerpnt",
+                "microsoft powerpoint": "powerpnt",
+                "outlook": "outlook",
+                "microsoft outlook": "outlook",
+                "onenote": "onenote",
+                "access": "msaccess",
+                "publisher": "mspub",
+                # Development
                 "vscode": "code",
                 "visual studio code": "code",
+                "vs code": "code",
                 "code": "code",
+                "visual studio": "devenv",
+                "sublime": "subl",
+                "sublime text": "subl",
+                "atom": "atom",
+                "pycharm": "pycharm64",
+                "intellij": "idea64",
+                "git bash": "git-bash",
+                "postman": "Postman",
+                # System Tools
                 "notepad": "notepad.exe",
+                "notepad++": "notepad++",
                 "explorer": "explorer.exe",
                 "file explorer": "explorer.exe",
                 "task manager": "taskmgr.exe",
                 "settings": "ms-settings:",
                 "calculator": "calc.exe",
+                "calc": "calc.exe",
                 "paint": "mspaint.exe",
+                "snipping tool": "SnippingTool",
+                "snip": "SnippingTool",
+                "wordpad": "wordpad.exe",
+                "control panel": "control",
+                # Terminal variants
+                "terminal": "wt",
+                "windows terminal": "wt",
+                "cmd": "cmd.exe",
+                "command prompt": "cmd.exe",
+                "powershell": "powershell.exe",
+                # Utilities
+                "obs": "obs64",
+                "obs studio": "obs64",
+                "steam": "steam",
+                "blender": "blender",
+                "audacity": "audacity",
+                "gimp": "gimp",
+                "figma": "Figma",
+                "notion": "Notion",
+                "obsidian": "Obsidian",
+                "1password": "1Password",
+                "bitwarden": "Bitwarden",
             }
             
             target_cmd = APP_ALIASES_WIN.get(normalized, app_name)
             
             launched = False
+            # Layer 1: Try shutil.which to find the executable on PATH
             if shutil.which(target_cmd) or shutil.which(target_cmd.split(".")[0]):
                 try:
                     subprocess.Popen(
@@ -970,17 +1322,31 @@ class TaskExecutor:
                 except Exception:
                     pass
             
+            # Layer 2: Direct Popen attempt (for executables not on PATH but still launchable)
+            if not launched:
+                try:
+                    subprocess.Popen(
+                        target_cmd,
+                        shell=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    launched = True
+                except Exception:
+                    pass
+
+            # Layer 3: URI scheme launch (e.g., ms-settings:)
             if not launched and ":" in target_cmd:
                 try:
                     subprocess.Popen(f"start {target_cmd}", shell=True)
                     launched = True
                 except Exception:
                     pass
-                    
+            
+            # Layer 4: Fallback — type app name into Windows Start Menu search
             if not launched and pyautogui:
                 try:
                     pyautogui.press("win")
-                    import time
                     time.sleep(0.5)
                     pyautogui.write(app_name, interval=0.02)
                     time.sleep(0.5)
@@ -997,7 +1363,625 @@ class TaskExecutor:
             if event_queue:
                 await event_queue.put({"type": "token", "text": msg})
 
+        # --- Persistent Browser Actions ---
+        elif action == "browser_switch":
+            target = primitive.get("target", "chrome")
+            try:
+                browser_registry.switch_target(target)
+                msg = f"Switched target browser session to '{target.capitalize()}', Sir."
+            except Exception as e:
+                msg = f"Failed to switch browser: {e}"
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "browser_list":
+            try:
+                browsers = browser_registry.list_browsers()
+                msg = "Here are your browser sessions:\n" + "\n".join(browsers)
+            except Exception as e:
+                msg = f"Failed to list browsers: {e}"
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "browser_go_to":
+            url = primitive.get("url", "")
+            try:
+                browser_registry.go_to(url)
+                msg = f"Navigated to '{url}' in the active browser, Sir."
+            except Exception as e:
+                msg = f"Failed to navigate to {url}: {e}"
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "browser_search":
+            query = primitive.get("query", "")
+            engine = primitive.get("engine", "google")
+            try:
+                browser_registry.search(query, engine)
+                msg = f"Searching for '{query}' using {engine.capitalize()} in the active browser, Sir."
+            except Exception as e:
+                msg = f"Failed to perform search: {e}"
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "browser_smart_click":
+            desc = primitive.get("description", "")
+            try:
+                success = browser_registry.smart_click(desc)
+                if success:
+                    msg = f"Successfully clicked on '{desc}' element, Sir."
+                else:
+                    msg = f"Could not find or click '{desc}' element, Sir."
+            except Exception as e:
+                msg = f"Smart click failed: {e}"
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "browser_smart_type":
+            desc = primitive.get("description", "")
+            text = primitive.get("text", "")
+            try:
+                success = browser_registry.smart_type(desc, text)
+                if success:
+                    msg = f"Successfully typed text into '{desc}' element, Sir."
+                else:
+                    msg = f"Could not find or type into '{desc}' element, Sir."
+            except Exception as e:
+                msg = f"Smart type failed: {e}"
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "browser_close_tab":
+            try:
+                browser_registry.close_tab()
+                msg = "Closed the active tab, Sir."
+            except Exception as e:
+                msg = f"Failed to close tab: {e}"
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "browser_new_tab":
+            try:
+                browser_registry.new_tab()
+                msg = "Opened a new tab, Sir."
+            except Exception as e:
+                msg = f"Failed to open new tab: {e}"
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        # --- Automated Messenger Routes ---
+        elif action == "send_message":
+            platform = primitive.get("platform", "").lower().strip()
+            receiver = primitive.get("receiver", "")
+            text = primitive.get("text", "")
+            
+            msg = ""
+            if platform in ("instagram", "messenger", "facebook messenger", "fb"):
+                # Use web app fallback
+                if async_playwright:
+                    try:
+                        async def _send_web():
+                            await send_web_message(platform, receiver, text)
+                        browser_registry.run_coro(_send_web())
+                        msg = f"Sent {platform} message to {receiver} via browser."
+                    except Exception as e:
+                        msg = f"Failed to send web message: {e}"
+                else:
+                    msg = f"Playwright not installed, cannot send message via web fallback for {platform}."
+            else:
+                # Desktop App Automation (WhatsApp, Telegram, Signal, Discord)
+                # 1. Bring up the app
+                app_aliases = {
+                    "whatsapp": "WhatsApp",
+                    "telegram": "Telegram",
+                    "signal": "signal",
+                    "discord": "Discord"
+                }
+                app_name = app_aliases.get(platform, platform)
+                # Use standard launcher to start & focus
+                await self._handle_primitive({"action": "open_app", "app_name": app_name}, event_queue)
+                time.sleep(3.0) # wait for app to open & focus
+                
+                if pyautogui:
+                    try:
+                        # 2. Focus search: ctrl+f (or ctrl+k for discord)
+                        if platform == "discord":
+                            pyautogui.hotkey("ctrl", "k")
+                        else:
+                            pyautogui.hotkey("ctrl", "f")
+                        time.sleep(0.5)
+                        
+                        # 3. Copy recipient and paste
+                        if pyperclip:
+                            pyperclip.copy(receiver)
+                            time.sleep(0.2)
+                            pyautogui.hotkey("ctrl", "v")
+                        else:
+                            pyautogui.typewrite(receiver, interval=0.02)
+                        time.sleep(1.0)
+                        
+                        # 4. Press Enter to open chat
+                        pyautogui.press("enter")
+                        time.sleep(1.5)
+                        
+                        # 5. Copy message text and paste
+                        if pyperclip:
+                            pyperclip.copy(text)
+                            time.sleep(0.2)
+                            pyautogui.hotkey("ctrl", "v")
+                        else:
+                            pyautogui.typewrite(text, interval=0.02)
+                        time.sleep(0.5)
+                        
+                        # 6. Press Enter to send
+                        pyautogui.press("enter")
+                        msg = f"Successfully dispatched message to {receiver} on {platform.capitalize()}."
+                    except Exception as e:
+                        msg = f"UI automation failed during messaging: {e}"
+                else:
+                    msg = "pyautogui is not installed, cannot run desktop messenger automation."
+            
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        # --- Grid Layout Snapping ---
+        elif action == "snap_left":
+            if pyautogui:
+                pyautogui.hotkey("win", "left")
+                msg = "Snapped window to the left, Sir."
+            else:
+                msg = "pyautogui not installed, cannot snap window."
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
+        elif action == "snap_right":
+            if pyautogui:
+                pyautogui.hotkey("win", "right")
+                msg = "Snapped window to the right, Sir."
+            else:
+                msg = "pyautogui not installed, cannot snap window."
+            if event_queue:
+                await event_queue.put({"type": "token", "text": msg})
+
         else:
             console.print(f"[red]Unknown action:[/red] {action}")
 
 task_executor = TaskExecutor()
+
+
+# ==========================================
+# Mark-XL Persistent Browser Engine & helpers
+# ==========================================
+
+def get_browser_profile_path(browser_name: str) -> str:
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    appdata = os.environ.get("APPDATA", "")
+    
+    paths = {
+        "chrome": os.path.join(local_appdata, r"Google\Chrome\User Data"),
+        "brave": os.path.join(local_appdata, r"BraveSoftware\Brave-Browser\User Data"),
+        "edge": os.path.join(local_appdata, r"Microsoft\Edge\User Data"),
+        "opera": os.path.join(appdata, r"Opera Software\Opera Stable"),
+        "firefox": os.path.join(appdata, r"Mozilla\Firefox\Profiles"),
+    }
+    
+    target = browser_name.lower().strip()
+    profile_path = paths.get(target)
+    if profile_path and os.path.exists(profile_path):
+        return profile_path
+        
+    fallback_root = Path.home() / ".jarvis_profiles"
+    fallback_root.mkdir(parents=True, exist_ok=True)
+    browser_fallback = fallback_root / target
+    browser_fallback.mkdir(parents=True, exist_ok=True)
+    return str(browser_fallback)
+
+def find_browser_executable(browser_name: str) -> str:
+    browser_name = browser_name.lower().strip()
+    program_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+    local_appdata = os.environ.get("LOCALAPPDATA", "C:\\Users\\Default\\AppData\\Local")
+    
+    candidates = []
+    if browser_name in ("chrome", "google chrome"):
+        candidates = [
+            os.path.join(program_files, r"Google\Chrome\Application\chrome.exe"),
+            os.path.join(program_files_x86, r"Google\Chrome\Application\chrome.exe"),
+            os.path.join(local_appdata, r"Google\Chrome\Application\chrome.exe"),
+        ]
+    elif browser_name == "brave":
+        candidates = [
+            os.path.join(program_files, r"BraveSoftware\Brave-Browser\Application\brave.exe"),
+            os.path.join(program_files_x86, r"BraveSoftware\Brave-Browser\Application\brave.exe"),
+            os.path.join(local_appdata, r"BraveSoftware\Brave-Browser\Application\brave.exe"),
+        ]
+    elif browser_name in ("edge", "msedge", "microsoft edge"):
+        candidates = [
+            os.path.join(program_files_x86, r"Microsoft\Edge\Application\msedge.exe"),
+            os.path.join(program_files, r"Microsoft\Edge\Application\msedge.exe"),
+        ]
+    elif browser_name == "opera":
+        candidates = [
+            os.path.join(local_appdata, r"Programs\Opera\launcher.exe"),
+            os.path.join(program_files, r"Opera\launcher.exe"),
+            os.path.join(program_files_x86, r"Opera\launcher.exe"),
+        ]
+    elif browser_name == "firefox":
+        candidates = [
+            os.path.join(program_files, r"Mozilla Firefox\firefox.exe"),
+            os.path.join(program_files_x86, r"Mozilla Firefox\firefox.exe"),
+        ]
+        
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+            
+    paths_to_check = {
+        "chrome": "chrome.exe",
+        "brave": "brave.exe",
+        "edge": "msedge.exe",
+        "opera": "opera.exe",
+        "firefox": "firefox.exe"
+    }
+    shortcut = paths_to_check.get(browser_name)
+    if shortcut:
+        found = shutil.which(shortcut)
+        if found:
+            return found
+            
+    return ""
+
+class _BrowserSession:
+    def __init__(self, browser_name: str, loop):
+        self.browser_name = browser_name
+        self.loop = loop
+        self.playwright = None
+        self.context = None
+        self.page = None
+
+    async def initialize(self):
+        if self.playwright is not None:
+            return
+            
+        if not async_playwright:
+            raise RuntimeError("Playwright is not installed.")
+            
+        self.playwright = await async_playwright().start()
+        
+        profile_path = get_browser_profile_path(self.browser_name)
+        exec_path = find_browser_executable(self.browser_name)
+        
+        try:
+            kwargs = {
+                "user_data_dir": profile_path,
+                "headless": False,
+            }
+            if exec_path:
+                kwargs["executable_path"] = exec_path
+                
+            if self.browser_name == "firefox":
+                self.context = await self.playwright.firefox.launch_persistent_context(**kwargs)
+            else:
+                self.context = await self.playwright.chromium.launch_persistent_context(**kwargs)
+        except Exception as e:
+            console.print(f"[yellow]Failed to launch {self.browser_name} with real profile: {e}. Trying fallback...[/yellow]")
+            fallback_dir = os.path.join(str(Path.home() / ".jarvis_profiles"), f"{self.browser_name}_fallback")
+            os.makedirs(fallback_dir, exist_ok=True)
+            kwargs = {
+                "user_data_dir": fallback_dir,
+                "headless": False,
+            }
+            if exec_path:
+                kwargs["executable_path"] = exec_path
+                
+            if self.browser_name == "firefox":
+                self.context = await self.playwright.firefox.launch_persistent_context(**kwargs)
+            else:
+                self.context = await self.playwright.chromium.launch_persistent_context(**kwargs)
+                
+        pages = self.context.pages
+        if pages:
+            self.page = pages[0]
+        else:
+            self.page = await self.context.new_page()
+
+    async def close(self):
+        if self.context:
+            await self.context.close()
+        if self.playwright:
+            await self.playwright.stop()
+        self.context = None
+        self.playwright = None
+        self.page = None
+
+class _SessionRegistry:
+    def __init__(self):
+        self.loop = None
+        self.thread = None
+        self.sessions = {}
+        self.active_browser = "chrome"
+        self._lock = threading.Lock()
+
+    def start(self):
+        with self._lock:
+            if self.thread is not None and self.thread.is_alive():
+                return
+            self.loop = asyncio.new_event_loop()
+            self.thread = threading.Thread(target=self._run_loop, daemon=True)
+            self.thread.start()
+
+    def _run_loop(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    def run_coro(self, coro):
+        self.start()
+        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        return future.result()
+
+    async def _get_active_session(self):
+        if not self.active_browser:
+            self.active_browser = "chrome"
+        browser_name = self.active_browser.lower().strip()
+        if browser_name not in self.sessions:
+            session = _BrowserSession(browser_name, self.loop)
+            self.sessions[browser_name] = session
+            await session.initialize()
+        return self.sessions[browser_name]
+
+    def switch_target(self, target: str):
+        self.active_browser = target.lower().strip()
+        self.run_coro(self._get_active_session())
+
+    def list_browsers(self) -> List[str]:
+        supported = ["chrome", "edge", "brave", "opera", "firefox"]
+        results = []
+        for b in supported:
+            is_active = "active" if b == self.active_browser else "inactive"
+            is_init = "initialized" if b in self.sessions else "not initialized"
+            results.append(f"{b.capitalize()} ({is_active}, {is_init})")
+        return results
+
+    def go_to(self, url: str):
+        async def _go():
+            session = await self._get_active_session()
+            await session.page.goto(url)
+        self.run_coro(_go())
+
+    def search(self, query: str, engine: str = "google"):
+        async def _search():
+            session = await self._get_active_session()
+            engine_lower = engine.lower().strip()
+            if "bing" in engine_lower:
+                url = f"https://www.bing.com/search?q={quote_plus(query)}"
+            elif "duck" in engine_lower:
+                url = f"https://duckduckgo.com/?q={quote_plus(query)}"
+            else:
+                url = f"https://www.google.com/search?q={quote_plus(query)}"
+            await session.page.goto(url)
+        self.run_coro(_search())
+
+    def smart_click(self, description: str) -> bool:
+        async def _click():
+            session = await self._get_active_session()
+            return await perform_smart_click(session.page, description)
+        return self.run_coro(_click())
+
+    def smart_type(self, description: str, text: str) -> bool:
+        async def _type():
+            session = await self._get_active_session()
+            return await perform_smart_type(session.page, description, text)
+        return self.run_coro(_type())
+
+    def close_tab(self):
+        async def _close():
+            session = await self._get_active_session()
+            if session.context:
+                pages = session.context.pages
+                if len(pages) > 1:
+                    await session.page.close()
+                    session.page = session.context.pages[-1]
+                else:
+                    await session.page.goto("about:blank")
+        self.run_coro(_close())
+
+    def new_tab(self):
+        async def _new():
+            session = await self._get_active_session()
+            if session.context:
+                session.page = await session.context.new_page()
+        self.run_coro(_new())
+
+browser_registry = _SessionRegistry()
+
+async def find_element(page, description: str, roles=None):
+    if roles is None:
+        roles = ["button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox"]
+    desc_clean = description.strip()
+    
+    for role in roles:
+        try:
+            locator = page.get_by_role(role, name=re.compile(re.escape(desc_clean), re.IGNORECASE))
+            if await locator.count() > 0:
+                for i in range(await locator.count()):
+                    el = locator.nth(i)
+                    if await el.is_visible():
+                        return el
+        except Exception:
+            pass
+
+    try:
+        locator = page.get_by_placeholder(re.compile(re.escape(desc_clean), re.IGNORECASE))
+        if await locator.count() > 0:
+            for i in range(await locator.count()):
+                el = locator.nth(i)
+                if await el.is_visible():
+                    return el
+    except Exception:
+        pass
+
+    try:
+        locator = page.get_by_label(re.compile(re.escape(desc_clean), re.IGNORECASE))
+        if await locator.count() > 0:
+            for i in range(await locator.count()):
+                el = locator.nth(i)
+                if await el.is_visible():
+                    return el
+    except Exception:
+        pass
+
+    try:
+        locator = page.get_by_text(re.compile(re.escape(desc_clean), re.IGNORECASE))
+        if await locator.count() > 0:
+            for i in range(await locator.count()):
+                el = locator.nth(i)
+                if await el.is_visible():
+                    return el
+    except Exception:
+        pass
+
+    selectors = [
+        f"[title*='{desc_clean}' i]",
+        f"[alt*='{desc_clean}' i]",
+        f"[aria-label*='{desc_clean}' i]",
+        f"[id*='{desc_clean}' i]",
+        f"[name*='{desc_clean}' i]",
+        f"[class*='{desc_clean}' i]",
+        f"//*[contains(text(), '{desc_clean}')]",
+        f"[value*='{desc_clean}' i]",
+    ]
+    for sel in selectors:
+        try:
+            locator = page.locator(sel)
+            if await locator.count() > 0:
+                for i in range(await locator.count()):
+                    el = locator.nth(i)
+                    if await el.is_visible():
+                        return el
+        except Exception:
+            pass
+    return None
+
+async def perform_smart_click(page, description: str) -> bool:
+    element = await find_element(page, description)
+    if element:
+        await element.scroll_into_view_if_needed()
+        await element.click()
+        return True
+    return False
+
+async def perform_smart_type(page, description: str, text: str) -> bool:
+    element = await find_element(page, description, roles=["textbox", "searchbox"])
+    if not element:
+        element = await find_element(page, description)
+    if element:
+        await element.scroll_into_view_if_needed()
+        await element.click()
+        await element.fill("")
+        await element.type(text, delay=50)
+        return True
+    return False
+
+async def send_web_message(platform: str, receiver: str, text: str):
+    session = await browser_registry._get_active_session()
+    if platform == "instagram":
+        url = "https://www.instagram.com/direct/new/"
+    else:
+        url = "https://www.facebook.com/messages/new"
+        
+    await session.page.goto(url)
+    try:
+        await session.page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:
+        pass
+    await asyncio.sleep(3)
+    
+    success = False
+    for search_term in ["search", "to:", "to", "send message to", "type a name"]:
+        success = await perform_smart_type(session.page, search_term, receiver)
+        if success:
+            break
+            
+    if not success:
+        for _ in range(5):
+            await session.page.keyboard.press("Tab")
+            await asyncio.sleep(0.1)
+        await session.page.keyboard.insert_text(receiver)
+        await asyncio.sleep(1)
+        
+    await session.page.keyboard.press("Enter")
+    await asyncio.sleep(2)
+    
+    success_msg = False
+    for msg_term in ["message", "type a message", "write a message", "start a message"]:
+        success_msg = await perform_smart_type(session.page, msg_term, text)
+        if success_msg:
+            break
+            
+    if not success_msg:
+        for _ in range(5):
+            await session.page.keyboard.press("Tab")
+            await asyncio.sleep(0.1)
+        await session.page.keyboard.insert_text(text)
+        await asyncio.sleep(0.5)
+        
+    await session.page.keyboard.press("Enter")
+
+
+# ==========================================
+# Native COM Audio Control helper functions
+# ==========================================
+
+def set_win_mute_com(mute: bool) -> bool:
+    if not pycaw or not comtypes:
+        return False
+    try:
+        comtypes.CoInitialize()
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.Activate(
+            IAudioEndpointVolume._iid_, comtypes.CLSCTX_ALL, None
+        )
+        volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
+        volume.SetMute(1 if mute else 0, None)
+        return True
+    except Exception as e:
+        console.print(f"[yellow]COM Mute control failed: {e}[/yellow]")
+        return False
+    finally:
+        try:
+            comtypes.CoUninitialize()
+        except Exception:
+            pass
+
+def set_win_volume_com(percent: int) -> bool:
+    if not pycaw or not comtypes:
+        return False
+    try:
+        comtypes.CoInitialize()
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.Activate(
+            IAudioEndpointVolume._iid_, comtypes.CLSCTX_ALL, None
+        )
+        volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
+        if percent <= 0:
+            volume.SetMute(1, None)
+            min_db, _, _ = volume.GetVolumeRange()
+            volume.SetMasterVolumeLevel(min_db, None)
+        else:
+            volume.SetMute(0, None)
+            db = 20 * math.log10(percent / 100.0)
+            min_db, max_db, _ = volume.GetVolumeRange()
+            if db < min_db:
+                db = min_db
+            elif db > max_db:
+                db = max_db
+            volume.SetMasterVolumeLevel(db, None)
+        return True
+    except Exception as e:
+        console.print(f"[yellow]COM Volume control failed: {e}[/yellow]")
+        return False
+    finally:
+        try:
+            comtypes.CoUninitialize()
+        except Exception:
+            pass

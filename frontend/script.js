@@ -1969,44 +1969,6 @@ async function sendMessage(textOverride) {
             preStarterPlayer.play(() => {});
         }
 
-        // ── Instant voice acknowledgment fired the moment Enter is pressed ──
-        if (ttsPlayer?.enabled) {
-            const ACK_PHRASES = [
-                'On it, Sir.',
-                'Sure, let me check that.',
-                'Right away, Sir.',
-                'Let me look that up.',
-                'Searching now.',
-                'Got it, one moment.',
-            ];
-            const ackText = ACK_PHRASES[Math.floor(Math.random() * ACK_PHRASES.length)];
-            // Fire-and-forget: fetch TTS audio and enqueue immediately
-            fetch(`${API}/api/tts`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: ackText })
-            }).then(r => {
-                if (!r.ok || !r.body) return;
-                const reader = r.body.getReader();
-                const chunks = [];
-                const pump = () => reader.read().then(({ done, value }) => {
-                    if (done) {
-                        const blob = new Blob(chunks, { type: 'audio/mpeg' });
-                        const fr = new FileReader();
-                        fr.onload = () => {
-                            const b64 = fr.result.split(',')[1];
-                            if (b64 && ttsPlayer && !ttsPlayer.stopped) ttsPlayer.enqueue(b64);
-                        };
-                        fr.readAsDataURL(blob);
-                        return;
-                    }
-                    chunks.push(value);
-                    return pump();
-                });
-                pump().catch(() => {});
-            }).catch(() => {});
-        }
-
 
         timeoutId = setTimeout(() => controller.abort(), 300000);
 

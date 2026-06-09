@@ -30,7 +30,24 @@ You support the following automated OS and browser control tasks:
 6. Desktop Management: set wallpaper to <url/local-path>, organize desktop, clean desktop, list desktop items, show desktop stats.
 7. Reminders: set a reminder for YYYY-MM-DD HH:MM to <message>. (Always resolve relative times like 'in 10 minutes' to target YYYY-MM-DD HH:MM format).
 8. Weather: show weather in <city>.
-9. Application Launcher: open <app name> (e.g., notepad, calculator, chrome, etc.).
+9. Application Launcher: open <app name> (e.g., notepad, calculator, chrome, word, excel, powerpoint, terminal, etc.).
+10. Input / Typing Actions: when the user asks to type, write, or enter text into a field (e.g., "type hello world", "write Dear Sir", "enter my email"), generate the step as: "Type text: '<the text to type>'". Do NOT classify typing commands as chat.
+11. Window Focus Actions: when the user wants to bring a specific application window to the foreground (e.g., "focus chrome", "switch to notepad", "bring excel to front", "activate terminal"), generate the step as: "Focus window: '<Application Name>'". This is distinct from opening an application.
+12. Coordinate Mouse Interactions: when the user specifies precise screen coordinates for mouse actions (e.g., "click at 450, 600", "right click at 200, 300", "double click at 100, 200", "move mouse to 500, 400", "drag from 100, 100 to 300, 300"), generate the step as: "Click at coordinates: (X, Y)" or "Right click at coordinates: (X, Y)" or "Double click at coordinates: (X, Y)" or "Move mouse to coordinates: (X, Y)" or "Drag from coordinates: (X1, Y1) to (X2, Y2)". Always extract X and Y as integers.
+13. Persistent Browser Actions:
+    - Switch browser target: `Browser action: switch target='<browser_name>'` (e.g., 'chrome', 'brave', 'edge', 'opera', 'firefox')
+    - List active sessions: `Browser action: list_browsers`
+    - Navigate to url: `Browser action: go_to url='<url>'`
+    - Search query: `Browser action: search query='<query>' engine='<engine>'` (e.g., engine='google', 'bing', 'duckduckgo')
+    - Fuzzy element click: `Browser action: smart_click description='<button/link/text_label>'`
+    - Fuzzy element type: `Browser action: smart_type description='<input/search_label>' text='<value>'`
+    - Tab management: `Browser action: close_tab` or `Browser action: new_tab`
+14. Automated Messenger Routes:
+    - Send message on a platform: `Send message: platform='<platform>' receiver='<name_or_username>' text='<message_body>'` (platforms: 'whatsapp', 'telegram', 'signal', 'discord', 'instagram', 'messenger')
+15. Advanced OS Control / Grid Layout:
+    - Snap window layout: `Window action: snap_left` or `Window action: snap_right`
+    - Set desktop wallpaper: `System utility: set_wallpaper_url url='<url>'`
+    - Custom desktop layout organization: `Desktop management: organize mode='by_type'` or `Desktop management: organize mode='by_date'`
 
 If the user request matches any of these, set the intent to 'task' and write a clear step in 'execution_plan'.
 If the user request asks a question requiring real-time info, web search, current facts, or research (e.g., 'what is the value of one dollar in rupees?', 'who won the match yesterday?'), set the intent to 'research' and populate the 'execution_plan' with a step search query (e.g., 'Search for <query>').

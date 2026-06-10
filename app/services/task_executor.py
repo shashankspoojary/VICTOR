@@ -523,6 +523,10 @@ class TaskExecutor:
         open_keywords = ("open ", "go to ", "navigate to ", "launch ")
         if any(s.startswith(kw) for kw in open_keywords):
             target = re.sub(r'^(open|go to|navigate to|launch)\s+', '', step, flags=re.IGNORECASE).strip()
+            # Strip away common structural noise or prefixes from the application name
+            target = re.sub(r'^(application|app|window|a new)\s*:\s*', '', target, flags=re.IGNORECASE).strip()
+            target = re.sub(r'^(application|app|window|a new)\s+', '', target, flags=re.IGNORECASE).strip()
+            target = re.sub(r'\s+(window|application|app)$', '', target, flags=re.IGNORECASE).strip()
             target_lower = target.lower()
 
             # 1. Check known sites dictionary first (handles names without dots)

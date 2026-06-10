@@ -225,6 +225,14 @@ class TaskExecutor:
         """Rule-based step translator — no AI call needed for standard actions."""
         s = step.strip().lower()
 
+        # --- Face Recognition ---
+        if s.startswith("save face:"):
+            name_m = re.search(r"name=['\"]([^'\"]+)['\"]", step, re.IGNORECASE)
+            rel_m = re.search(r"relationship=['\"]([^'\"]+)['\"]", step, re.IGNORECASE)
+            name = name_m.group(1) if name_m else "Unknown"
+            rel = rel_m.group(1) if rel_m else "Unknown"
+            return {"action": "save_face", "name": name, "relationship": rel}
+
         # --- Persistent Browser Actions ---
         if s.startswith("browser action:"):
             rest = step[len("browser action:"):].strip()
@@ -641,6 +649,25 @@ class TaskExecutor:
             console.print(f"[bold red]Memory Removed:[/bold red] {param_key}")
             if event_queue:
                 await event_queue.put({"type": "token", "text": "Done, Sir. I have removed that from my memory."})
+        elif action == "save_face":
+            name = primitive.get("name", "Unknown")
+            rel = primitive.get("relationship", "Unknown")
+            from app.services.face_service import face_service
+            import os
+            import config
+            temp_path = os.path.join(config.DIRS["workspace_uploads"], "temp_webcam.jpg")
+            if os.path.exists(temp_path):
+                success = face_service.save_face(temp_path, name, rel)
+                if success:
+                    console.print(f"[bold green]Face Saved:[/bold green] {name} ({rel})")
+                    if event_queue:
+                        await event_queue.put({"type": "token", "text": f"I have saved the identity of {name}, your {rel}, Sir."})
+                else:
+                    if event_queue:
+                        await event_queue.put({"type": "token", "text": "I could not detect a clear face in the image to save, Sir."})
+            else:
+                if event_queue:
+                    await event_queue.put({"type": "token", "text": "I do not have a recent camera image to save, Sir."})
         elif action == "open_url":
             console.print(f"[green]Opening URL:[/green] {param}")
             self._open_url_in_browser(param)

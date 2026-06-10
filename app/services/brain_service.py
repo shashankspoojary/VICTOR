@@ -53,6 +53,8 @@ The step format must look like this: "Memorize key 'user_owner_name' with value 
 If the user asks you to forget, remove, or delete a specific remembered fact or preference (e.g., "forget the reminder", "remove the user_owner_name memory"), generate a 'forget' step.
 The step format must look like this: "Forget key 'reminder'" or "Forget key 'user_owner_name'".
 
+If the user provides a name and relationship for a person seen on the camera/image to be saved (e.g., "Yes, this is John, my brother", "Save him as Mike, my friend"), set the intent to 'task' and generate a step: "Save face: name='<Name>', relationship='<Relationship>'".
+
 You support the following automated OS and browser control tasks:
 1. System Volume & Brightness: increase/decrease/mute/unmute volume, set volume to X percent, increase/decrease brightness, set brightness to X percent.
 2. OS / Window Control: close window, close application, minimize window, maximize window, toggle full screen, show desktop, switch window, open task manager, open settings, open file explorer.

@@ -167,6 +167,7 @@ async function handleFileSelect(files) {
     if (files.length > remaining) {
         showToast(`Only added ${remaining} of ${files.length} files (max 10).`);
     }
+    if (messageInput) messageInput.focus();
 }
 
 function renderFilePreviews() {
@@ -205,6 +206,7 @@ function removeFile(index) {
     if (item && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
     selectedFiles.splice(index, 1);
     renderFilePreviews();
+    if (messageInput) messageInput.focus();
 }
 
 function clearSelectedFiles() {
@@ -438,6 +440,7 @@ function init() {
     bindEvents();
     setMode(currentMode);
     autoResizeInput();
+    if (messageInput) messageInput.focus();
 }
 
 async function preloadStarterAudio() {
@@ -1358,7 +1361,10 @@ async function sendMessageWithImage(text, imgBase64) {
         clearTimeout(timeoutId);
         isStreaming = false;
         if (sendBtn) sendBtn.disabled = false;
-        if (messageInput) messageInput.disabled = false;
+        if (messageInput) {
+            messageInput.disabled = false;
+            messageInput.focus();
+        }
         if (orbContainer) orbContainer.classList.remove('active');
         if (orb && !(ttsPlayer && ttsPlayer.playing)) orb.setState('idle');
     }
@@ -2158,7 +2164,10 @@ async function sendMessage(textOverride) {
         clearTimeout(timeoutId);
         isStreaming = false;
         if (sendBtn) sendBtn.disabled = false;
-        if (messageInput) messageInput.disabled = false;
+        if (messageInput) {
+            messageInput.disabled = false;
+            messageInput.focus();
+        }
         if (orbContainer) orbContainer.classList.remove('active');
         /* ---- Reset orb to idle (only if TTS is not still playing) ---- */
         if (orb && !(ttsPlayer && ttsPlayer.playing)) {

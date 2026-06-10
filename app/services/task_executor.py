@@ -5,6 +5,7 @@ import re
 import math
 import threading
 from typing import List
+import random
 from rich.console import Console
 from app.services.realtime_service import realtime_service
 from app.services.memory_service import memory_service
@@ -13,6 +14,7 @@ import sys
 import subprocess
 import datetime
 import shutil
+import urllib.request
 from urllib.parse import quote_plus
 from pathlib import Path
 
@@ -125,6 +127,42 @@ class TaskExecutor:
             except Exception:
                 pass
         time.sleep(0.5)
+
+    def _open_url_in_browser(self, url: str):
+        """Open a URL in the already-running browser as a new tab.
+        Detects running browser processes, activates the window, and navigates
+        via keyboard shortcuts. Falls back to webbrowser.open() only when
+        no browser is currently running."""
+        if pyautogui:
+            browser_executables = ["chrome", "msedge", "firefox", "brave", "opera"]
+            for browser in browser_executables:
+                try:
+                    result = subprocess.run(
+                        ["tasklist", "/FI", f"IMAGENAME eq {browser}.exe", "/NH"],
+                        capture_output=True, text=True, timeout=3
+                    )
+                    if browser.lower() in result.stdout.lower():
+                        # Found a running browser — activate and open URL in a new tab
+                        self._activate_window(browser)
+                        time.sleep(0.3)
+                        pyautogui.hotkey("ctrl", "t")    # Open new tab
+                        time.sleep(0.5)
+                        pyautogui.hotkey("ctrl", "l")    # Focus address bar
+                        time.sleep(0.3)
+                        # Use clipboard for reliable URL entry (handles special chars)
+                        if pyperclip:
+                            pyperclip.copy(url)
+                            pyautogui.hotkey("ctrl", "v")
+                        else:
+                            pyautogui.write(url, interval=0.02)
+                        time.sleep(0.3)
+                        pyautogui.press("enter")
+                        return True
+                except Exception:
+                    continue
+        # No running browser found — fall back to system default
+        webbrowser.open(url)
+        return False
 
     def _parse_reminder(self, step: str):
         s = step.lower().strip()
@@ -261,13 +299,19 @@ class TaskExecutor:
                 mode = mode_m.group(1) if mode_m else "by_type"
                 return {"action": "organize_desktop_mode", "mode": mode}
 
-        # --- Memorize ---
+        # --- Memorize & Forget ---
         if s.startswith("memorize"):
             # Expected format: "Memorize key 'X' with value 'Y'"
             key_m = re.search(r"key\s+'?([\w_]+)'?", step, re.IGNORECASE)
             val_m = re.search(r"value\s+'?([^']+)'?", step, re.IGNORECASE)
             if key_m and val_m:
                 return {"action": "memorize", "key": key_m.group(1), "value": val_m.group(1).strip()}
+
+        if s.startswith("forget"):
+            # Expected format: "Forget key 'X'"
+            key_m = re.search(r"key\s+'?([\w_]+)'?", step, re.IGNORECASE)
+            if key_m:
+                return {"action": "forget", "key": key_m.group(1)}
 
         # --- Reminders ---
         if "remind" in s or "reminder" in s:
@@ -483,12 +527,22 @@ class TaskExecutor:
 
         if is_youtube_play:
             param = re.sub(
-                r"\b(open|play|search\s+for|search|find|watch|show|on\s+youtube|youtube|and\s+search\s+for|and\s+play|and|video|song|music)\b",
+                r"\b(open|play|search\s+for|search|find|watch|show|on\s+youtube|youtube|and\s+search\s+for|and\s+play|and|video|song|music|popular)\b",
                 "", step, flags=re.IGNORECASE
             )
             param = re.sub(r'\s+', ' ', param).strip(" ,.-'\"")
-            if param:
-                return {"action": "play_youtube", "param": param}
+            # If all keywords were stripped (e.g. "play music"), pick a random genre
+            if not param:
+                _default_queries = [
+                    "trending music hits", "top pop songs", "chill vibes playlist",
+                    "best hindi songs", "lofi hip hop beats", "bollywood hits",
+                    "top 50 global hits", "feel good music mix", "popular songs today",
+                    "trending hits playlist", "best new music this week",
+                    "upbeat dance music", "acoustic relaxing music",
+                    "popular English songs", "viral hits music",
+                ]
+                param = random.choice(_default_queries)
+            return {"action": "play_youtube", "param": param}
 
         # --- Open URL / website ---
         url_match = re.search(r'https?://[^\s]+', step)
@@ -546,6 +600,23 @@ class TaskExecutor:
             # 4. Fallback: it's not a known site/url, treat as a local application to open
             return {"action": "open_app", "app_name": target}
 
+        # --- "search <site>" should open the site, not research it ---
+        if s.startswith("search "):
+            search_target = re.sub(r'^search\s+(?:for\s+)?', '', step, flags=re.IGNORECASE).strip()
+            search_target = re.sub(r'\s+(window|application|app)$', '', search_target, flags=re.IGNORECASE).strip()
+            search_target_lower = search_target.lower()
+            # Exact match in known sites
+            if search_target_lower in KNOWN_SITES:
+                return {"action": "open_url", "param": KNOWN_SITES[search_target_lower]}
+            # Partial match in known sites
+            for site_name, site_url in KNOWN_SITES.items():
+                if site_name in search_target_lower or search_target_lower in site_name:
+                    return {"action": "open_url", "param": site_url}
+            # Looks like a domain (e.g. "search stackoverflow.com")
+            if "." in search_target and " " not in search_target:
+                url = search_target if search_target.startswith("http") else f"https://{search_target}"
+                return {"action": "open_url", "param": url}
+
         # --- Research (default for info/search queries) ---
         query = re.sub(
             r'^(search for|search|look up|find|research|get|check|what is|tell me about)\s+',
@@ -564,29 +635,42 @@ class TaskExecutor:
             console.print(f"[bold green]Memory Updated:[/bold green] {param_key} -> {param_value}")
             if event_queue:
                 await event_queue.put({"type": "token", "text": "Understood, Sir. I have updated my records."})
+        elif action == "forget":
+            param_key = primitive.get("key")
+            await memory_service.remove_memory(param_key)
+            console.print(f"[bold red]Memory Removed:[/bold red] {param_key}")
+            if event_queue:
+                await event_queue.put({"type": "token", "text": "Done, Sir. I have removed that from my memory."})
         elif action == "open_url":
             console.print(f"[green]Opening URL:[/green] {param}")
-            webbrowser.open(param)
+            self._open_url_in_browser(param)
             if event_queue:
                 site_name = re.sub(r'https?://(www\.)?', '', param).split('/')[0]
                 await event_queue.put({"type": "token", "text": f"Opening {site_name} in your browser now, Sir."})
         elif action == "play_youtube":
             console.print(f"[magenta]Playing on YouTube:[/magenta] {param}")
-            search_res = await realtime_service.search(f"site:youtube.com watch {param}")
-            summary = search_res.get("summary", "")
-            match = re.search(r'(https://www\.youtube\.com/watch\?v=[\w-]+)', summary)
-            if match:
-                target_video_url = match.group(1)
-                console.print(f"[green]Direct video link found:[/green] {target_video_url}")
-                webbrowser.open(target_video_url)
-                if event_queue:
-                    await event_queue.put({"type": "token", "text": f"Playing '{param}' on YouTube now, Sir."})
-            else:
-                fallback_url = f"https://www.youtube.com/results?search_query={param.replace(' ', '+')}"
-                console.print(f"[yellow]No direct link found, falling back to search:[/yellow] {fallback_url}")
-                webbrowser.open(fallback_url)
-                if event_queue:
-                    await event_queue.put({"type": "token", "text": f"Searching YouTube for '{param}', Sir."})
+            search_url = f"https://www.youtube.com/results?search_query={quote_plus(param)}"
+            try:
+                # Fetch fresh search results in the background and extract the first video
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9'
+                }
+                req = urllib.request.Request(search_url, headers=headers)
+                html = urllib.request.urlopen(req, timeout=15).read().decode('utf-8')
+                match = re.search(r'watch\?v=([a-zA-Z0-9_-]{11})', html)
+                if match:
+                    video_url = f"https://www.youtube.com/watch?v={match.group(1)}"
+                    console.print(f"[green]Found fresh video link:[/green] {video_url}")
+                    self._open_url_in_browser(video_url)
+                else:
+                    self._open_url_in_browser(search_url)
+            except Exception as e:
+                console.print(f"[yellow]Failed to fetch direct video link, falling back to search page:[/yellow] {e}")
+                self._open_url_in_browser(search_url)
+
+            if event_queue:
+                await event_queue.put({"type": "token", "text": f"Playing '{param}' on YouTube now, Sir."})
 
         elif action == "research":
             try:
@@ -1103,7 +1187,6 @@ class TaskExecutor:
             img_path = primitive.get("path")
             desktop_msg = ""
             if action == "set_wallpaper_url":
-                import urllib.request
                 import tempfile
                 try:
                     url = primitive.get("url")
@@ -1258,144 +1341,27 @@ class TaskExecutor:
         # --- Local Application Launcher ---
         elif action == "open_app":
             app_name = primitive.get("app_name", "").strip()
-            normalized = app_name.lower()
-            
-            # Comprehensive app alias dictionary (merged from Mark-XL)
-            APP_ALIASES_WIN = {
-                # Browsers
-                "chrome": "chrome",
-                "google chrome": "chrome",
-                "firefox": "firefox",
-                "edge": "msedge",
-                "microsoft edge": "msedge",
-                "brave": "brave",
-                "safari": "msedge",
-                "opera": "opera",
-                # Communication
-                "whatsapp": "WhatsApp",
-                "telegram": "Telegram",
-                "discord": "Discord",
-                "slack": "Slack",
-                "zoom": "Zoom",
-                "teams": "msteams",
-                "microsoft teams": "msteams",
-                "skype": "skype",
-                "signal": "signal",
-                # Media
-                "spotify": "Spotify",
-                "vlc": "vlc",
-                "netflix": "Netflix",
-                "itunes": "iTunes",
-                # Microsoft Office
-                "word": "winword",
-                "microsoft word": "winword",
-                "excel": "excel",
-                "microsoft excel": "excel",
-                "powerpoint": "powerpnt",
-                "microsoft powerpoint": "powerpnt",
-                "outlook": "outlook",
-                "microsoft outlook": "outlook",
-                "onenote": "onenote",
-                "access": "msaccess",
-                "publisher": "mspub",
-                # Development
-                "vscode": "code",
-                "visual studio code": "code",
-                "vs code": "code",
-                "code": "code",
-                "visual studio": "devenv",
-                "sublime": "subl",
-                "sublime text": "subl",
-                "atom": "atom",
-                "pycharm": "pycharm64",
-                "intellij": "idea64",
-                "git bash": "git-bash",
-                "postman": "Postman",
-                # System Tools
-                "notepad": "notepad.exe",
-                "notepad++": "notepad++",
-                "explorer": "explorer.exe",
-                "file explorer": "explorer.exe",
-                "task manager": "taskmgr.exe",
-                "settings": "ms-settings:",
-                "calculator": "calc.exe",
-                "calc": "calc.exe",
-                "paint": "mspaint.exe",
-                "snipping tool": "SnippingTool",
-                "snip": "SnippingTool",
-                "wordpad": "wordpad.exe",
-                "control panel": "control",
-                # Terminal variants
-                "terminal": "wt",
-                "windows terminal": "wt",
-                "cmd": "cmd.exe",
-                "command prompt": "cmd.exe",
-                "powershell": "powershell.exe",
-                # Utilities
-                "obs": "obs64",
-                "obs studio": "obs64",
-                "steam": "steam",
-                "blender": "blender",
-                "audacity": "audacity",
-                "gimp": "gimp",
-                "figma": "Figma",
-                "notion": "Notion",
-                "obsidian": "Obsidian",
-                "1password": "1Password",
-                "bitwarden": "Bitwarden",
-            }
-            
-            target_cmd = APP_ALIASES_WIN.get(normalized, app_name)
             
             launched = False
-            # Layer 1: Try shutil.which to find the executable on PATH
-            if shutil.which(target_cmd) or shutil.which(target_cmd.split(".")[0]):
+            # Universal launcher: open Windows Start Menu search and type the app name.
+            # This works for any locally installed application without needing
+            # executable paths, aliases, or URI schemes.
+            if pyautogui:
                 try:
-                    subprocess.Popen(
-                        target_cmd,
-                        shell=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    launched = True
-                except Exception:
-                    pass
-            
-            # Layer 2: Direct Popen attempt (for executables not on PATH but still launchable)
-            if not launched:
-                try:
-                    subprocess.Popen(
-                        target_cmd,
-                        shell=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
+                    pyautogui.press("win")
+                    time.sleep(0.7)   # Settle time for Start Menu search UI overlay initialization
+                    pyautogui.write(app_name, interval=0.05)
+                    time.sleep(0.9)   # Windows file indexing delay for partial matching paths
+                    pyautogui.press("enter")
+                    time.sleep(2.5)   # Let process populate full window handle layout structures
                     launched = True
                 except Exception:
                     pass
 
-            # Layer 3: URI scheme launch (e.g., ms-settings:)
-            if not launched and ":" in target_cmd:
-                try:
-                    subprocess.Popen(f"start {target_cmd}", shell=True)
-                    launched = True
-                except Exception:
-                    pass
-            
-            # Layer 4: Fallback — type app name into Windows Start Menu search
-            if not launched and pyautogui:
-                try:
-                    # Enforce clear keystroke spacing to let Windows search index apps reliably
-                    pyautogui.press("win")
-                    time.sleep(0.5)
-                    pyautogui.write(app_name, interval=0.03)
-                    time.sleep(0.6)
-                    pyautogui.press("enter")
-                    launched = True
-                except Exception:
-                    pass
-                    
+            # Post-launch: enforce settlement window and force foreground focus
             if launched:
+                time.sleep(2.0)
+                self._activate_window(app_name)
                 msg = f"Opened {app_name}, Sir."
             else:
                 msg = f"Could not open {app_name}, Sir."
@@ -1425,11 +1391,17 @@ class TaskExecutor:
 
         elif action == "browser_go_to":
             url = primitive.get("url", "")
+            # Normalize URL: ensure it has a scheme
+            if url and not url.startswith(("http://", "https://", "about:")):
+                url = f"https://{url}"
             try:
                 browser_registry.go_to(url)
                 msg = f"Navigated to '{url}' in the active browser, Sir."
             except Exception as e:
-                msg = f"Failed to navigate to {url}: {e}"
+                # Playwright failed — fall back to opening in existing browser tab
+                console.print(f"[yellow]Playwright navigation failed, using direct browser fallback:[/yellow] {e}")
+                self._open_url_in_browser(url)
+                msg = f"Opened '{url}' in your browser, Sir."
             if event_queue:
                 await event_queue.put({"type": "token", "text": msg})
 

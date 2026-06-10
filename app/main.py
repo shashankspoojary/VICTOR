@@ -94,7 +94,7 @@ async def synthesize_speech_to_b64(text: str) -> Optional[str]:
     return None
 
 # Fast non-thinking model for distillation tasks (avoids empty-output errors from thinking models)
-_FAST_MODEL = "llama-3.1-8b-instant"
+_FAST_MODEL = "llama-3.3-70b-versatile"
 
 async def _dual_distill(raw_text: str, query: str) -> tuple:
     """Single AI call returning (chat_answer, sidebar_answer) — one round-trip instead of two."""
@@ -218,15 +218,9 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                         response_chunks.append(item["text"])
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "tts_sentence":
-                        active_tts_tasks += 1
-                        async def bg_tts(txt):
-                            b64 = await synthesize_speech_to_b64(txt)
-                            await event_queue.put({"type": "audio_b64", "data": b64})
-                        asyncio.create_task(bg_tts(item["text"]))
-                    elif item["type"] == "audio_b64":
-                        active_tts_tasks -= 1
-                        if item["data"]:
-                            yield "data: " + json.dumps({"audio": item["data"]}) + "\n\n"
+                        b64 = await synthesize_speech_to_b64(item["text"])
+                        if b64:
+                            yield "data: " + json.dumps({"audio": b64}) + "\n\n"
                     elif item["type"] == "task_status":
                         yield "data: " + json.dumps({"activity": {"event": item.get('status'), "message": item.get('step')}}) + "\n\n"
                     elif item["type"] == "search_results":
@@ -284,23 +278,30 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                         if "<think>" in active_buffer:
                             active_buffer = active_buffer.split("<think>")[0]
                             
-                        match = re.search(
-                            r'(?<!\d\.)(?<!\d\!)(?<!\d\?)'
-                            r'(?<!\b[a-zA-Z]\.)'
-                            r'(?<!\b[dD][rR]\.)(?<!\b[mM][rR]\.)(?<!\b[mM][rR][sS]\.)'
-                            r'(?<=[.!?])\s+|\n+', 
-                            active_buffer
-                        )
-                        if match:
-                            sentence = active_buffer[:match.end()].strip()
-                            sentence_buffer = sentence_buffer[match.end():]
-                            if sentence:
-                                clean_sentence = re.sub(r'<think>.*?</think>', '', sentence, flags=re.DOTALL)
-                                clean_sentence = clean_sentence.replace("*", "").replace("#", "").strip()
-                                if clean_sentence:
-                                    audio_b64 = await synthesize_speech_to_b64(clean_sentence)
-                                    if audio_b64:
-                                        yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                        while True:
+                            match = re.search(
+                                r'(?<!\d\.)(?<!\d\!)(?<!\d\?)'
+                                r'(?<!\b[a-zA-Z]\.)'
+                                r'(?<!\b[dD][rR]\.)(?<!\b[mM][rR]\.)(?<!\b[mM][rR][sS]\.)'
+                                r'(?<=[.!?])(?:\s+|\n+)|\n\n+', 
+                                active_buffer
+                            )
+                            if match:
+                                sentence = active_buffer[:match.end()].strip()
+                                sentence_buffer = sentence_buffer[match.end():]
+                                active_buffer = sentence_buffer
+                                if "<think>" in active_buffer:
+                                    active_buffer = active_buffer.split("<think>")[0]
+                                
+                                if sentence:
+                                    clean_sentence = re.sub(r'<think>.*?</think>', '', sentence, flags=re.DOTALL)
+                                    clean_sentence = clean_sentence.replace("*", "").replace("#", "").strip()
+                                    if clean_sentence:
+                                        audio_b64 = await synthesize_speech_to_b64(clean_sentence)
+                                        if audio_b64:
+                                            yield "data: " + json.dumps({"audio": audio_b64}) + "\n\n"
+                            else:
+                                break
                                     
                 if use_tts and sentence_buffer.strip():
                     final_text = re.sub(r'<think>.*?</think>', '', sentence_buffer, flags=re.DOTALL)
@@ -595,21 +596,28 @@ async def post_stream_endpoint(payload: ChatPayload):
                                 if "<think>" in active_buffer:
                                     active_buffer = active_buffer.split("<think>")[0]
                                     
-                                match = re.search(
-                                    r'(?<!\d\.)(?<!\d\!)(?<!\d\?)'
-                                    r'(?<!\b[a-zA-Z]\.)'
-                                    r'(?<!\b[dD][rR]\.)(?<!\b[mM][rR]\.)(?<!\b[mM][rR][sS]\.)'
-                                    r'(?<=[.!?])\s+|\n+', 
-                                    active_buffer
-                                )
-                                if match:
-                                    sentence = active_buffer[:match.end()].strip()
-                                    sentence_buffer = sentence_buffer[match.end():]
-                                    if sentence:
-                                        clean_sentence = re.sub(r'<think>.*?</think>', '', sentence, flags=re.DOTALL)
-                                        clean_sentence = clean_sentence.replace("*", "").replace("#", "").strip()
-                                        if clean_sentence:
-                                            await event_queue.put({"type": "tts_sentence", "text": clean_sentence})
+                                while True:
+                                    match = re.search(
+                                        r'(?<!\d\.)(?<!\d\!)(?<!\d\?)'
+                                        r'(?<!\b[a-zA-Z]\.)'
+                                        r'(?<!\b[dD][rR]\.)(?<!\b[mM][rR]\.)(?<!\b[mM][rR][sS]\.)'
+                                        r'(?<=[.!?])(?:\s+|\n+)|\n\n+', 
+                                        active_buffer
+                                    )
+                                    if match:
+                                        sentence = active_buffer[:match.end()].strip()
+                                        sentence_buffer = sentence_buffer[match.end():]
+                                        active_buffer = sentence_buffer
+                                        if "<think>" in active_buffer:
+                                            active_buffer = active_buffer.split("<think>")[0]
+                                            
+                                        if sentence:
+                                            clean_sentence = re.sub(r'<think>.*?</think>', '', sentence, flags=re.DOTALL)
+                                            clean_sentence = clean_sentence.replace("*", "").replace("#", "").strip()
+                                            if clean_sentence:
+                                                await event_queue.put({"type": "tts_sentence", "text": clean_sentence})
+                                    else:
+                                        break
                         if use_tts and sentence_buffer.strip():
                             final_text = re.sub(r'<think>.*?</think>', '', sentence_buffer, flags=re.DOTALL)
                             if "<think>" in final_text:
@@ -636,7 +644,7 @@ async def post_stream_endpoint(payload: ChatPayload):
                 while True:
                     item = await event_queue.get()
                     if item.get("type") == "done":
-                        if active_tts_tasks == 0 and event_queue.empty():
+                        if event_queue.empty():
                             break
                         else:
                             await event_queue.put({"type": "done"})
@@ -646,15 +654,9 @@ async def post_stream_endpoint(payload: ChatPayload):
                     elif item["type"] == "chunk":
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "tts_sentence":
-                        active_tts_tasks += 1
-                        async def bg_tts(txt):
-                            b64 = await synthesize_speech_to_b64(txt)
-                            await event_queue.put({"type": "audio_b64", "data": b64})
-                        asyncio.create_task(bg_tts(item["text"]))
-                    elif item["type"] == "audio_b64":
-                        active_tts_tasks -= 1
-                        if item["data"]:
-                            yield "data: " + json.dumps({"audio": item["data"]}) + "\n\n"
+                        b64 = await synthesize_speech_to_b64(item["text"])
+                        if b64:
+                            yield "data: " + json.dumps({"audio": b64}) + "\n\n"
                     elif item["type"] == "token":
                         yield "data: " + json.dumps({"chunk": item["text"]}) + "\n\n"
                     elif item["type"] == "error":

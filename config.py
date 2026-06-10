@@ -47,7 +47,7 @@ GROQ_VLM_API_KEY_2 = os.getenv("GROQ_VLM_API_KEY_2")
 GROQ_VLM_API_KEY_3 = os.getenv("GROQ_VLM_API_KEY_3")
 
 # Models
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_VLM_MODEL = os.getenv("GROQ_VLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 
 # Text-to-Speech Settings

@@ -34,6 +34,9 @@ class BrainService:
 Your job is to analyze the user input and return a cleanly structured JSON block parsing the core intent and a step-by-step execution plan.
 If the user provides a multi-task statement like "Open Chrome, play music, and check my mail", the plan must split these into individual clear strings inside 'execution_plan'.
 When a user asks to open a platform (like YouTube) and search/play/watch something on it (e.g., 'open youtube and play carryminati's video' or 'open youtube and search lo-fi beats'), DO NOT split this into two steps (like 'Open YouTube' and 'Play video'). Consolidate it into a single clear step: 'Search for carryminati's video on YouTube' or 'Search for lo-fi beats on YouTube'.
+When the user says to open a browser AND open/search a website (e.g., 'open chrome and open github', 'open chrome and search github'), split into exactly two simple steps: ["open chrome", "open github"]. Do NOT use 'Browser action: go_to' for opening websites. Always use plain 'open <site_name>' format so the system can open it as a new tab in the already-running browser.
+When the user says "search <website_name>" (e.g., "search github", "search google", "search reddit"), treat it as "open <website_name>" — generate "open github", NOT "search for github". Only use research/search steps for actual information queries (e.g., "search for today's weather", "search who won the match").
+EVERY distinct action in a compound request MUST appear as its own step in the execution_plan. NEVER drop or merge unrelated actions. For example: "open chrome and search github and play a song" MUST produce exactly 3 steps: ["open chrome", "open github", "Play popular music on YouTube"]. Missing any step is UNACCEPTABLE.
 Distinct, unrelated actions (like looking up space news) must remain separate steps.
 
 MANDATORY ACTION SPLITTING & APP NAMING RULES:
@@ -42,8 +45,13 @@ MANDATORY ACTION SPLITTING & APP NAMING RULES:
   2. "Type text: 'hello world'"
 - Clean App Naming: Output launcher commands strictly as "open <clean_app_name>" (e.g., "open chrome", "open paint", "open copilot"). You must never emit extra text wrappers or labels like "application:", "app:", "window:", or "a new".
 
+CONVERSATIONAL & CANCELLATION OVERRIDE:
+If the user's request is a conversational response, a cancellation, or a rejection (e.g., "no need", "yes please", "cancel", "stop", "remove it", "nevermind", "thanks"), you MUST set the intent to 'chat' and leave 'execution_plan' empty. Do NOT hallucinate tasks or copy example tasks from this prompt under any circumstances.
+
 If the user explicitly tells you a personal fact, preference, name, or instructs you to 'remember' a specific detail, DO NOT classify it as research or task. Set the intent to 'task' and generate a structural 'memorize' execution step.
 The step format must look like this: "Memorize key 'user_owner_name' with value 'Shashank'" or "Memorize key 'user_preference' with value 'X'".
+If the user asks you to forget, remove, or delete a specific remembered fact or preference (e.g., "forget the reminder", "remove the user_owner_name memory"), generate a 'forget' step.
+The step format must look like this: "Forget key 'reminder'" or "Forget key 'user_owner_name'".
 
 You support the following automated OS and browser control tasks:
 1. System Volume & Brightness: increase/decrease/mute/unmute volume, set volume to X percent, increase/decrease brightness, set brightness to X percent.
@@ -58,14 +66,14 @@ You support the following automated OS and browser control tasks:
 10. Input / Typing Actions: when the user asks to type, write, or enter text into a field (e.g., "type hello world", "write Dear Sir", "enter my email"), generate the step as: "Type text: '<the text to type>'". Do NOT classify typing commands as chat.
 11. Window Focus Actions: when the user wants to bring a specific application window to the foreground (e.g., "focus chrome", "switch to notepad", "bring excel to front", "activate terminal"), generate the step as: "Focus window: '<Application Name>'". This is distinct from opening an application.
 12. Coordinate Mouse Interactions: when the user specifies precise screen coordinates for mouse actions (e.g., "click at 450, 600", "right click at 200, 300", "double click at 100, 200", "move mouse to 500, 400", "drag from 100, 100 to 300, 300"), generate the step as: "Click at coordinates: (X, Y)" or "Right click at coordinates: (X, Y)" or "Double click at coordinates: (X, Y)" or "Move mouse to coordinates: (X, Y)" or "Drag from coordinates: (X1, Y1) to (X2, Y2)". Always extract X and Y as integers.
-13. Persistent Browser Actions:
+13. Persistent Browser Actions (advanced Playwright control only — NOT for opening websites):
     - Switch browser target: `Browser action: switch target='<browser_name>'` (e.g., 'chrome', 'brave', 'edge', 'opera', 'firefox')
     - List active sessions: `Browser action: list_browsers`
-    - Navigate to url: `Browser action: go_to url='<url>'`
     - Search query: `Browser action: search query='<query>' engine='<engine>'` (e.g., engine='google', 'bing', 'duckduckgo')
     - Fuzzy element click: `Browser action: smart_click description='<button/link/text_label>'`
     - Fuzzy element type: `Browser action: smart_type description='<input/search_label>' text='<value>'`
     - Tab management: `Browser action: close_tab` or `Browser action: new_tab`
+    NOTE: Do NOT use `Browser action: go_to url='...'` for opening websites. Always use plain "open <site_name>" (e.g., "open github", "open google") so the system opens it in a new tab of the already-running browser.
 14. Automated Messenger Routes:
     - Send message on a platform: `Send message: platform='<platform>' receiver='<name_or_username>' text='<message_body>'` (platforms: 'whatsapp', 'telegram', 'signal', 'discord', 'instagram', 'messenger')
 15. Advanced OS Control / Grid Layout:
@@ -73,11 +81,16 @@ You support the following automated OS and browser control tasks:
     - Set desktop wallpaper: `System utility: set_wallpaper_url url='<url>'`
     - Custom desktop layout organization: `Desktop management: organize mode='by_type'` or `Desktop management: organize mode='by_date'`
 16. Standalone File Manipulation: standalone file manipulation tasks—including terms like "Archive files", "Zip items", "Compress data", or "Clean up directory".
+17. Media Playback: when the user asks to play music, play a song, play a video, play audio, or any media playback command (e.g., "play music", "play some songs", "play lofi beats", "play a song on youtube"), set the intent to 'task' and generate the step as: "Play <description> on YouTube" (e.g., "Play music on YouTube", "Play lofi beats on YouTube"). If the user just says "play music" or "play a song" without specifics, generate: "Play music on YouTube". NEVER classify media playback requests as 'chat'.
 
 CRITICAL: Standalone file manipulation tasks—including terms like "Archive files", "Zip items", "Compress data", or "Clean up directory"—must strictly be categorized under the `task` intent and structured as operational execution steps, rather than falling back into web `research` mode.
 
+CRITICAL: Media playback commands—including terms like "play music", "play a song", "play video", "play audio", "play beats"—must ALWAYS be categorized under the `task` intent with a clear execution step like "Play <query> on YouTube". NEVER classify these as 'chat' or generate a conversational response about how to play music.
+
 If the user request matches any of these, set the intent to 'task' and write a clear step in 'execution_plan'.
 If the user request asks a question requiring real-time info, web search, current facts, or research (e.g., 'what is the value of one dollar in rupees?', 'who won the match yesterday?'), set the intent to 'research' and populate the 'execution_plan' with a step search query (e.g., 'Search for <query>').
+EXCEPTION: If the user asks about the current local time, date, day of the week, or year (e.g., "what time is it", "what is the hour", "what's today's date"), DO NOT classify it as research. The current time and date are already provided to you in the system memory. Set the intent to 'chat' and leave 'execution_plan' empty.
+
 If the user uploads a file (indicated by '--- Start of File: <filename> ---' blocks) with no explicit instructions, or asks to explain/summarize/discuss the file content, set the intent to 'chat' and leave 'execution_plan' empty. DO NOT classify file uploads as 'research' or try to search the web for the file name or file content.
 The 'intent' should be one of: chat, research, vision, task.
 

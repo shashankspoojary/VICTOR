@@ -114,7 +114,7 @@ GROQ_VLM_API_KEY_2=your-vlm-key-2
 GROQ_VLM_API_KEY_3=your-vlm-key-3
 
 # Models
-GROQ_MODEL=llama-3.1-8b-instant
+GROQ_MODEL=llama-3.3-70b-versatile
 GROQ_VLM_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 
 # TTS voice (e.g. en-GB-RyanNeural, en-US-ChristopherNeural)

@@ -17,7 +17,12 @@ class MemoryService:
                 json.dump({}, f)
 
     async def get_context(self, session_id: str) -> str:
-        context_parts = ["--- SYSTEM MEMORY & CONTEXT ---"]
+        now = datetime.datetime.now()
+        context_parts = [
+            "--- SYSTEM MEMORY & CONTEXT ---",
+            f"\n[Current Time & Date]",
+            f"The current local time is {now.strftime('%I:%M %p')} on {now.strftime('%A, %B %d, %Y')}."
+        ]
         
         # 1. Read personal settings and key facts from memory.json
         try:
@@ -120,5 +125,21 @@ class MemoryService:
                 json.dump(memory_data, f, indent=2)
         except Exception as e:
             print(f"Error updating memory: {e}")
+
+    async def remove_memory(self, fact_key: str):
+        try:
+            if self.memory_file.exists():
+                with open(self.memory_file, "r", encoding="utf-8") as f:
+                    try:
+                        memory_data = json.load(f)
+                    except json.JSONDecodeError:
+                        memory_data = {}
+                
+                if fact_key in memory_data:
+                    del memory_data[fact_key]
+                    with open(self.memory_file, "w", encoding="utf-8") as f:
+                        json.dump(memory_data, f, indent=2)
+        except Exception as e:
+            print(f"Error removing memory: {e}")
 
 memory_service = MemoryService()

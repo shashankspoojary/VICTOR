@@ -13,4 +13,4 @@ venv/
 # Databases & Logs
 database/chats_data/
 database/vector_store/
-workspace/execution_logs/
+workspace/

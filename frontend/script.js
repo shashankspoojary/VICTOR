@@ -19,8 +19,11 @@ let safariVoiceHintShown = false;
 let orb = null;
 let recognition = null;
 let ttsPlayer = null;
+let aecDummyStream = null;
 const SETTINGS_KEY = 'victor_settings';
 const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: true };
+let latestAiSpeech = '';
+let lastTtsEndTime = 0;
 const PRE_STARTER_FILES = ['starter_1', 'starter_2', 'starter_3', 'starter_4', 'starter_5', 'starter_6', 'starter_7', 'starter_8', 'starter_9', 'starter_10'];
 let PRE_STARTER_CACHE = {};
 let settings = { ...DEFAULT_SETTINGS };
@@ -523,12 +526,55 @@ function initSpeech() {
         const last = e.results[e.results.length - 1];
         const transcript = (last && last[0]) ? last[0].transcript.trim() : '';
         const isFinal = last && last.isFinal;
-        if (speechWidgetText) speechWidgetText.textContent = transcript;
-        if (speechWidget) speechWidget.classList.add('visible');
-        if (settings.voiceInterrupt && ttsPlayer && ttsPlayer.playing && transcript.length > 0) {
+
+        const ttsActive = ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0);
+        if (ttsActive) lastTtsEndTime = Date.now();
+        const recentlyActive = ttsActive || (Date.now() - lastTtsEndTime < 3000);
+
+        if (recentlyActive && !isFinal) {
+            return; // Ignore interim results to prevent garbled echo from falsely interrupting or flashing on screen
+        }
+
+        if (isFinal) {
+            const normT = transcript.toLowerCase().replace(/[^\w\s]/g, '').trim();
+            const normAi = latestAiSpeech.toLowerCase().replace(/[^\w\s]/g, '').trim();
+            let echo = false;
+            
+            if (normT && normAi && normAi.length > 10) {
+                if (normAi.includes(normT) && normT.length > 8) {
+                    echo = true;
+                } else if (normT.length >= 8) {
+                    const getBgs = str => {
+                        const bg = [];
+                        for (let i = 0; i < str.length - 1; i++) bg.push(str.slice(i, i + 2));
+                        return bg;
+                    };
+                    const tBg = getBgs(normT);
+                    const sBg = getBgs(normAi);
+                    if (tBg.length > 0) {
+                        let match = 0;
+                        for (const b of tBg) {
+                            if (sBg.includes(b)) match++;
+                        }
+                        if (match / tBg.length > 0.6) {
+                            echo = true;
+                        }
+                    }
+                }
+            } else if (normT && normAi && normT.length <= 10 && normAi.includes(normT)) {
+                if (recentlyActive) echo = true;
+            }
+
+            if (echo) return;
+        }
+
+        if (ttsActive && settings.voiceInterrupt && transcript.length > 0) {
             ttsPlayer.stop();
             ttsPlayer.stopped = false;
         }
+
+        if (speechWidgetText) speechWidgetText.textContent = transcript;
+        if (speechWidget) speechWidget.classList.add('visible');
         if (isFinal && transcript) {
             pendingSendTranscript = transcript;
             clearTimeout(speechSendTimeout);
@@ -579,8 +625,21 @@ function initSpeech() {
     };
 }
 
-function startListening() {
+async function startListening() {
     if (!recognition || isStreaming || isListening) return;
+
+    if (!aecDummyStream && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+            aecDummyStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+            // Force the browser to keep the AEC hardware pipeline hot by playing it muted
+            const aecAudio = document.createElement('audio');
+            aecAudio.muted = true;
+            aecAudio.srcObject = aecDummyStream;
+            aecAudio.play().catch(()=>{});
+            window.__aecAudio = aecAudio; // Prevent garbage collection
+        } catch (_) {}
+    }
+
     if (isSafariOrIOS() && !safariVoiceHintShown) {
         showToast('Voice works best in Chrome. Safari has limited support.');
         safariVoiceHintShown = true;
@@ -2009,6 +2068,7 @@ async function sendMessage(textOverride) {
         const decoder = new TextDecoder();
         let sseBuffer = '';
         let fullResponse = '';
+        latestAiSpeech = '';
         let cursorEl = null;
         let streamDone = false;
         while (!streamDone) {
@@ -2045,6 +2105,7 @@ async function sendMessage(textOverride) {
                             if (ttsPlayer) ttsPlayer.reset();
                         }
                         fullResponse += chunkText;
+                        latestAiSpeech = fullResponse;
                         const textSpan = contentEl.querySelector('.msg-stream-text');
                         if (textSpan) {
                             // First chunk: clear pulsing dots and start real streamed content

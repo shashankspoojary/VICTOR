@@ -36,13 +36,14 @@ VICTOR is a state-of-the-art, voice-enabled, vision-capable AI tactical assistan
 - **YouTube Playback Automation**: Resolves direct URLs or searches and plays YouTube content directly, bypassing standard search results.
 
 ### 🔍 6. Real-Time Web Research & Data Verification
-- **Web Search**: Integrates Tavily API for fast, reliable search query execution.
-- **Dual-Distillation**: Performs a single LLM request to generate a concise, 25-word summary (ideal for Text-To-Speech) and a detailed 150-word markdown sidebar breakdown with comparative tables and citation links.
-- **Data & Currency Accuracy Engine**: Cross-references query results to reject outdated estimates (e.g., stale currency exchange rates) in favor of authoritative live values, ensuring strict data consistency without hallucination.
+- **Web Search**: Integrates DuckDuckGo as the primary search engine for fast, reliable search query execution, with the Tavily API acting as a robust fallback.
+- **Dual-Distillation**: Performs a single LLM request to generate a concise or conversational response (adapted based on query complexity for Text-To-Speech) and a detailed 250-word markdown sidebar breakdown with comparative tables and citation links.
+- **Data & Currency Accuracy Engine**: Cross-references query results to reject outdated estimates (e.g., stale currency exchange rates) in favor of authoritative live values. Provides typical price ranges when sources show varying prices, ensuring strict data consistency without hallucination.
 
 ### 👁️ 7. Computer Vision
 - **Image Analysis**: Uses Groq-powered Vision Language Models to analyze uploaded images or webcam snapshots.
 - **Prompt Interaction**: Ask questions directly about the image (e.g. *"What do you see?"*, *"What color is this?"*).
+- **Face Recognition**: Optionally integrates the `face_recognition` package to memorize and identify known faces and their relationships to you (e.g. *"Save him as Mike, my friend"*).
 
 ### 🎙️ 8. High-Fidelity Voice Output (TTS)
 - **Scrubbing Engine**: Cleans LLM outputs of thinking blocks (`<think>...</think>`), tables, markdown symbols, and emojis before synthesis.
@@ -64,22 +65,25 @@ VICTOR/
 ├── config.py              # Central configuration loader and folder setup
 ├── requirements.txt       # Project python dependencies
 ├── .env                   # API keys and system environment variables
+├── test.py                # Additional test script
 ├── app/
 │   ├── main.py            # FastAPI main router, stream and upload endpoints
 │   ├── models.py          # Pydantic data schemas
 │   ├── services/
 │   │   ├── ai_service.py        # LLM streaming & structured responses
 │   │   ├── brain_service.py     # Cognitive routing & intent classification
-│   │   ├── realtime_service.py  # Web search integration (Tavily)
+│   │   ├── realtime_service.py  # Web search integration (DuckDuckGo/Tavily)
 │   │   ├── memory_service.py    # Session logs and persistent database
 │   │   ├── vision_service.py    # VLM image analyzer
+│   │   ├── face_service.py      # Face recognition and biometric tracking
 │   │   └── task_executor.py     # Windows & browser automation execution engine
 │   └── utils/
 │       ├── key_rotation.py      # API key rotating logic
 │       ├── retry.py             # Error-handling & retry wrappers
 │       └── time_info.py         # Timestamp helpers
 ├── database/              # Stores local persistent data
-└── frontend/              # Sleek dark-mode dashboard files
+├── frontend/              # Sleek dark-mode dashboard files
+└── workspace/             # Directory for storing temporary files or uploads
 ```
 
 ---

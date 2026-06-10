@@ -334,7 +334,8 @@ class TaskExecutor:
                 "", step, flags=re.IGNORECASE
             )
             city = re.sub(r'\s+', ' ', city).strip(" ,.-'\"")
-            return {"action": "weather_report", "city": city or "Mumbai"}
+            query = f"weather in {city}" if city else "weather"
+            return {"action": "research", "param": query}
 
         # --- Wallpaper & Desktop General ---
         if "wallpaper" in s:
@@ -609,19 +610,15 @@ class TaskExecutor:
             return {"action": "open_app", "app_name": target}
 
         # --- "search <site>" should open the site, not research it ---
-        if s.startswith("search "):
-            search_target = re.sub(r'^search\s+(?:for\s+)?', '', step, flags=re.IGNORECASE).strip()
+        if s.startswith("search ") and not s.startswith("search for "):
+            search_target = re.sub(r'^search\s+', '', step, flags=re.IGNORECASE).strip()
             search_target = re.sub(r'\s+(window|application|app)$', '', search_target, flags=re.IGNORECASE).strip()
             search_target_lower = search_target.lower()
             # Exact match in known sites
             if search_target_lower in KNOWN_SITES:
                 return {"action": "open_url", "param": KNOWN_SITES[search_target_lower]}
-            # Partial match in known sites
-            for site_name, site_url in KNOWN_SITES.items():
-                if site_name in search_target_lower or search_target_lower in site_name:
-                    return {"action": "open_url", "param": site_url}
             # Looks like a domain (e.g. "search stackoverflow.com")
-            if "." in search_target and " " not in search_target:
+            if "." in search_target and " " not in search_target and len(search_target.split()) == 1:
                 url = search_target if search_target.startswith("http") else f"https://{search_target}"
                 return {"action": "open_url", "param": url}
 
@@ -1358,12 +1355,18 @@ class TaskExecutor:
 
         # --- Weather Report ---
         elif action == "weather_report":
+            # Fallback just in case it slips through
             city = primitive.get("city", "Mumbai")
-            url = f"https://www.google.com/search?q=weather+in+{quote_plus(city)}"
-            webbrowser.open(url)
-            weather_msg = f"Showing the weather for {city} in your browser, Sir."
+            query = f"weather in {city}"
+            search_res = await realtime_service.search(query)
+            summary = search_res.get("summary", "")
             if event_queue:
-                await event_queue.put({"type": "token", "text": weather_msg})
+                await event_queue.put({
+                    "type": "search_results",
+                    "query": query,
+                    "answer": summary,
+                    "results": search_res.get("results", [])
+                })
 
         # --- Local Application Launcher ---
         elif action == "open_app":

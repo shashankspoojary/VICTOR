@@ -22,6 +22,9 @@ class BrainService:
         return f"{start_part}\n\n... [TRUNCATED FOR CONTEXT LIMITS] ...\n\n{end_part}"
 
     async def classify_and_plan(self, user_input: str, session_id: str = "default") -> ExecutionPlan:
+        from app.utils.file_pruning import prune_file_blocks
+        user_input = prune_file_blocks(user_input, max_len=1000)
+
         if isinstance(session_id, str) and ("\n" in session_id or "---" in session_id):
             memory_context = session_id
         else:

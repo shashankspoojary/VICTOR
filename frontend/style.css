@@ -772,6 +772,45 @@ textarea {
     color: var(--accent-bright);
 }
 
+.action-summary-item.has-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 8px 14px;
+}
+
+.action-summary-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.action-summary-link-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 14px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius);
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all var(--transition);
+    flex-shrink: 0;
+}
+
+.action-summary-link-btn:hover {
+    background: var(--accent-bright);
+    box-shadow: 0 2px 8px rgba(201, 149, 107, 0.3);
+    transform: translateY(-1px);
+}
+
 /* ================================================================
    Message File Attachments
    ================================================================ */

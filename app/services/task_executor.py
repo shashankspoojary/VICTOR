@@ -56,7 +56,8 @@ except ImportError:
 console = Console()
 
 class TaskExecutor:
-    async def execute_plan(self, plan: List[str], event_queue: asyncio.Queue = None):
+    async def execute_plan(self, plan: List[str], event_queue: asyncio.Queue = None, auto_open_tabs: bool = False):
+        self.auto_open_tabs = auto_open_tabs
         if hasattr(plan, "execution_plan"):
             plan = plan.execution_plan
         elif isinstance(plan, dict) and "execution_plan" in plan:
@@ -162,6 +163,144 @@ class TaskExecutor:
                     continue
         # No running browser found — fall back to system default
         webbrowser.open(url)
+        return False
+
+    def open_url_in_background(self, url: str):
+        """Open a URL in the same browser window and bring focus back to the VICTOR tab."""
+        if not url.startswith(("http://", "https://", "about:")):
+            url = f"https://{url}"
+
+        opened = False
+        launched_browser = None
+        # Try to launch Chrome/Edge/Brave directly to ensure it works on Windows
+        browsers = ["chrome", "msedge", "brave"]
+        import shutil
+        import os
+        import subprocess
+        
+        for browser in browsers:
+            exe = shutil.which(browser)
+            if not exe:
+                # Check common paths on Windows
+                if browser == "chrome":
+                    paths = [
+                        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+                    ]
+                elif browser == "msedge":
+                    paths = [
+                        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+                    ]
+                elif browser == "brave":
+                    paths = [
+                        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+                        r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"
+                    ]
+                else:
+                    paths = []
+                for p in paths:
+                    if os.path.exists(p):
+                        exe = p
+                        break
+            if exe:
+                try:
+                    # Launch without --new-window to open in the existing window
+                    subprocess.Popen([exe, url], creationflags=0x08000000 if sys.platform == "win32" else 0)
+                    opened = True
+                    launched_browser = browser
+                    break
+                except Exception:
+                    pass
+
+        if not opened:
+            # Fallback to Firefox
+            firefox_exe = shutil.which("firefox") or (r"C:\Program Files\Mozilla Firefox\firefox.exe" if os.path.exists(r"C:\Program Files\Mozilla Firefox\firefox.exe") else None)
+            if firefox_exe:
+                try:
+                    subprocess.Popen([firefox_exe, url], creationflags=0x08000000 if sys.platform == "win32" else 0)
+                    opened = True
+                    launched_browser = "firefox"
+                except Exception:
+                    pass
+
+        if not opened:
+            # Ultimate fallback to webbrowser
+            try:
+                webbrowser.open(url)
+                opened = True
+            except Exception:
+                pass
+
+        # 2. Wait for the browser to register and focus the new tab
+        time.sleep(0.6)
+
+        # 3. Bring focus back to the VICTOR tab (using Search Tabs to find it wherever it is)
+        if pyautogui:
+            try:
+                # Ensure the browser window is active
+                target_win = launched_browser if launched_browser else "chrome"
+                self._activate_window(target_win)
+                time.sleep(0.25)
+
+                # Open the "Search Tabs" panel (supported in Chrome, Edge, Brave)
+                pyautogui.hotkey("ctrl", "shift", "a")
+                time.sleep(0.25)
+
+                # Type "VICTOR" to filter the open tabs list
+                pyautogui.write("VICTOR", interval=0.03)
+                # Press Enter to select and focus the VICTOR tab
+                pyautogui.press("enter")
+            except Exception as e:
+                console.print(f"[yellow]Failed to restore tab focus via pyautogui:[/yellow] {e}")
+
+        return opened
+
+    def focus_tab_by_query(self, query: str):
+        """Focus a tab in the browser using Search Tabs with the given query/URL."""
+        if pyautogui:
+            try:
+                # 1. Focus the browser window
+                browsers = ["chrome", "msedge", "brave", "firefox"]
+                for browser in browsers:
+                    try:
+                        result = subprocess.run(
+                            ["tasklist", "/FI", f"IMAGENAME eq {browser}.exe", "/NH"],
+                            capture_output=True, text=True, timeout=2
+                        )
+                        if browser.lower() in result.stdout.lower():
+                            self._activate_window(browser)
+                            break
+                    except Exception:
+                        continue
+                time.sleep(0.25)
+
+                # 2. Open Search Tabs panel
+                pyautogui.hotkey("ctrl", "shift", "a")
+                time.sleep(0.25)
+
+                # 3. Clean up the search string
+                clean_query = query
+                if "github.com" in query.lower():
+                    clean_query = "github"
+                elif "youtube.com" in query.lower():
+                    clean_query = "youtube"
+                else:
+                    # Strip http/https/www and get domain name
+                    clean_query = re.sub(r'https?://(www\.)?', '', query).split('/')[0].split('.')[0]
+
+                pyautogui.write(clean_query, interval=0.03)
+                time.sleep(0.25)
+
+                # 4. Press Enter to select the matching tab
+                pyautogui.press("enter")
+                time.sleep(0.15)
+
+                # 5. Send Escape to close the Search Tabs panel in case there were no matches
+                pyautogui.press("escape")
+                return True
+            except Exception as e:
+                console.print(f"[yellow]Failed to focus tab via pyautogui:[/yellow] {e}")
         return False
 
     def _parse_reminder(self, step: str):
@@ -667,13 +806,18 @@ class TaskExecutor:
                     await event_queue.put({"type": "token", "text": "I do not have a recent camera image to save, Sir."})
         elif action == "open_url":
             console.print(f"[green]Opening URL:[/green] {param}")
-            self._open_url_in_browser(param)
             if event_queue:
+                if not getattr(self, "auto_open_tabs", False):
+                    self.open_url_in_background(param)
+                await event_queue.put({"type": "actions", "actions": {"wopens": [param]}})
                 site_name = re.sub(r'https?://(www\.)?', '', param).split('/')[0]
                 await event_queue.put({"type": "token", "text": f"Opening {site_name} in your browser now, Sir."})
+            else:
+                self._open_url_in_browser(param)
         elif action == "play_youtube":
             console.print(f"[magenta]Playing on YouTube:[/magenta] {param}")
             search_url = f"https://www.youtube.com/results?search_query={quote_plus(param)}"
+            target_url = search_url
             try:
                 # Fetch fresh search results in the background and extract the first video
                 headers = {
@@ -686,15 +830,17 @@ class TaskExecutor:
                 if match:
                     video_url = f"https://www.youtube.com/watch?v={match.group(1)}"
                     console.print(f"[green]Found fresh video link:[/green] {video_url}")
-                    self._open_url_in_browser(video_url)
-                else:
-                    self._open_url_in_browser(search_url)
+                    target_url = video_url
             except Exception as e:
                 console.print(f"[yellow]Failed to fetch direct video link, falling back to search page:[/yellow] {e}")
-                self._open_url_in_browser(search_url)
 
             if event_queue:
+                if not getattr(self, "auto_open_tabs", False):
+                    self.open_url_in_background(target_url)
+                await event_queue.put({"type": "actions", "actions": {"plays": [target_url]}})
                 await event_queue.put({"type": "token", "text": f"Playing '{param}' on YouTube now, Sir."})
+            else:
+                self._open_url_in_browser(target_url)
 
         elif action == "research":
             try:
@@ -1425,13 +1571,19 @@ class TaskExecutor:
             if url and not url.startswith(("http://", "https://", "about:")):
                 url = f"https://{url}"
             try:
-                browser_registry.go_to(url)
-                msg = f"Navigated to '{url}' in the active browser, Sir."
+                 browser_registry.go_to(url)
+                 msg = f"Navigated to '{url}' in the active browser, Sir."
             except Exception as e:
-                # Playwright failed — fall back to opening in existing browser tab
-                console.print(f"[yellow]Playwright navigation failed, using direct browser fallback:[/yellow] {e}")
-                self._open_url_in_browser(url)
-                msg = f"Opened '{url}' in your browser, Sir."
+                 # Playwright failed — fall back to opening in existing browser tab
+                 console.print(f"[yellow]Playwright navigation failed, using direct browser fallback:[/yellow] {e}")
+                 if event_queue:
+                     if not getattr(self, "auto_open_tabs", False):
+                         self.open_url_in_background(url)
+                     await event_queue.put({"type": "actions", "actions": {"wopens": [url]}})
+                     msg = f"Opened '{url}' in your browser, Sir."
+                 else:
+                     self._open_url_in_browser(url)
+                     msg = f"Opened '{url}' in your browser, Sir."
             if event_queue:
                 await event_queue.put({"type": "token", "text": msg})
 

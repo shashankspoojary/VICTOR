@@ -85,6 +85,9 @@ class MemoryService:
 
     async def save_interaction(self, session_id: str, user_msg: str, assistant_response: str):
         try:
+            from app.utils.file_pruning import prune_file_blocks
+            user_msg = prune_file_blocks(user_msg, max_len=1000)
+            
             # Ensure the chats directory exists
             self.chats_dir.mkdir(parents=True, exist_ok=True)
             

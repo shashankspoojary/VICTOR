@@ -24,7 +24,7 @@ let ttsPlayer = null;
 let currentStreamController = null;
 
 const SETTINGS_KEY = 'victor_settings';
-const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: true };
+const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: true, autoOpenNewTabs: false };
 let latestAiSpeech = '';
 let lastTtsEndTime = 0;
 let ttsIsSpeaking  = false;  // true while the AI TTS audio element is actively playing
@@ -86,6 +86,7 @@ const toggleAutoActivity  = $('toggle-auto-activity');
 const toggleAutoSearch    = $('toggle-auto-search');
 const toggleThinkingSounds = $('toggle-thinking-sounds');
 const toggleVoiceInterrupt = $('toggle-voice-interrupt');
+const toggleAutoOpenTabs  = $('toggle-auto-open-tabs');
 const toastContainer     = $('toast-container');
 const uploadBtn          = $('upload-btn');
 const fileInput          = $('file-input');
@@ -493,6 +494,7 @@ function loadSettings() {
         if (toggleAutoSearch) toggleAutoSearch.checked = settings.autoOpenSearchResults;
         if (toggleThinkingSounds) toggleThinkingSounds.checked = settings.thinkingSounds;
         if (toggleVoiceInterrupt) toggleVoiceInterrupt.checked = settings.voiceInterrupt;
+        if (toggleAutoOpenTabs) toggleAutoOpenTabs.checked = settings.autoOpenNewTabs;
     } catch (_) {}
 }
 
@@ -921,11 +923,16 @@ function handleActions(actions, contentEl) {
     const safeOpen = (url, context) => {
         if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
             try {
-                const w = window.open(url, '_blank', 'noopener,noreferrer');
-                if (!w) {
-                    showToast('Pop-up blocked. Please allow pop-ups for VICTOR.');
-                    performedActions.push({ type: 'blocked', label: `Blocked: ${context || friendlyUrlLabel(url)}`, url });
+                if (settings.autoOpenNewTabs) {
+                    const w = window.open(url, '_blank', 'noopener,noreferrer');
+                    if (!w) {
+                        showToast('Pop-up blocked. Please allow pop-ups for VICTOR.');
+                        performedActions.push({ type: 'blocked', label: `Blocked: ${context || friendlyUrlLabel(url)}`, url });
+                    } else {
+                        performedActions.push({ type: 'opened', label: context || friendlyUrlLabel(url), url });
+                    }
                 } else {
+                    // Note: Background opening is handled securely by the backend to prevent focus stealing.
                     performedActions.push({ type: 'opened', label: context || friendlyUrlLabel(url), url });
                 }
             } catch (_) {
@@ -1115,19 +1122,37 @@ function renderActionSummary(contentEl, actions) {
             icon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
         }
 
-        const labelSpan = document.createElement('span');
-        labelSpan.className = 'action-summary-label';
-        labelSpan.textContent = action.label;
-
         if (action.url) {
+            item.classList.add('has-link');
+            
+            const leftContainer = document.createElement('div');
+            leftContainer.className = 'action-summary-left';
+            leftContainer.innerHTML = `${icon} <span class="action-summary-label">${escapeHtml(action.label)}</span>`;
+            item.appendChild(leftContainer);
+
             const link = document.createElement('a');
-            link.href = action.url;
-            link.target = '_blank';
-            link.rel = 'noopener';
-            link.className = 'action-summary-link';
-            link.innerHTML = `${icon} ${escapeHtml(action.label)}`;
+            link.href = '#';
+            link.className = 'action-summary-link-btn';
+            link.textContent = 'Open';
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                fetch('/api/focus_tab', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: action.url })
+                }).then(res => res.json()).then(resData => {
+                    if (resData.status !== 'success') {
+                        window.open(action.url, '_blank');
+                    }
+                }).catch(() => {
+                    window.open(action.url, '_blank');
+                });
+            });
             item.appendChild(link);
         } else {
+            const labelSpan = document.createElement('span');
+            labelSpan.className = 'action-summary-label';
+            labelSpan.textContent = action.label;
             item.innerHTML = `${icon} `;
             item.appendChild(labelSpan);
         }
@@ -1216,8 +1241,13 @@ function updateTaskCard(cardEl, status, data) {
         cardEl.appendChild(viewBtn);
         try {
             const taskId = cardEl.dataset.taskId;
-            const w = window.open(`${window.location.origin}/viewer.html?task_id=${taskId}`, '_blank');
-            if (!w) {
+            const url = `${window.location.origin}/viewer.html?task_id=${taskId}`;
+            if (settings.autoOpenNewTabs) {
+                const w = window.open(url, '_blank');
+                if (!w) {
+                    showToast('Result ready! Click "Open in new tab" to view.');
+                }
+            } else {
                 showToast('Result ready! Click "Open in new tab" to view.');
             }
         } catch (_) {  }
@@ -1227,6 +1257,27 @@ function updateTaskCard(cardEl, status, data) {
         cardEl.classList.add('bg-task-failed');
     }
     scrollToBottom();
+}
+
+function openUrlInBackground(url) {
+    if (!url) return;
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener,noreferrer';
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const eventOptions = isMac ? { metaKey: true } : { ctrlKey: true };
+        const evt = new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            ...eventOptions
+        });
+        a.dispatchEvent(evt);
+    } catch (err) {
+        console.error('[openUrlInBackground] failed:', err);
+    }
 }
 
 function captureFrameAsBase64() {
@@ -1368,7 +1419,8 @@ async function sendMessageWithImage(text, imgBase64) {
                 session_id: sessionId,
                 tts: !!(ttsPlayer && ttsPlayer.enabled),
                 imgbase64: imgBase64,
-                files: payloadFiles.length > 0 ? payloadFiles : undefined
+                files: payloadFiles.length > 0 ? payloadFiles : undefined,
+                auto_open_tabs: !!settings.autoOpenNewTabs
             }),
             signal: controller.signal,
         });
@@ -1575,6 +1627,12 @@ function bindEvents() {
     if (toggleVoiceInterrupt) {
         toggleVoiceInterrupt.addEventListener('change', () => {
             settings.voiceInterrupt = toggleVoiceInterrupt.checked;
+            saveSettings();
+        });
+    }
+    if (toggleAutoOpenTabs) {
+        toggleAutoOpenTabs.addEventListener('change', () => {
+            settings.autoOpenNewTabs = toggleAutoOpenTabs.checked;
             saveSettings();
         });
     }
@@ -2137,7 +2195,8 @@ async function sendMessage(textOverride) {
                 session_id: sessionId,
                 tts: !!(ttsPlayer && ttsPlayer.enabled),
                 imgbase64: imgBase64 || null,
-                files: payloadFiles.length > 0 ? payloadFiles : undefined
+                files: payloadFiles.length > 0 ? payloadFiles : undefined,
+                auto_open_tabs: !!settings.autoOpenNewTabs
             }),
             signal: controller.signal,
         });

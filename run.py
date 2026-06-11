@@ -60,6 +60,42 @@ def main():
     
     # Start the server
     console.print(f"[bold green]Dashboard is live at http://{config.HOST}:{config.PORT}[/bold green]")
+    
+    # Automatically open the browser in Google Chrome
+    import threading
+    import time
+    import webbrowser
+
+    def open_browser():
+        time.sleep(1.5)  # Give uvicorn a moment to start and bind to the port
+        host = "127.0.0.1" if config.HOST == "0.0.0.0" else config.HOST
+        url = f"http://{host}:{config.PORT}"
+        
+        opened = False
+        # Try standard paths for Google Chrome on Windows
+        for chrome_path in [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]:
+            if os.path.exists(chrome_path):
+                try:
+                    webbrowser.register('chrome', None, webbrowser.BackgroundBrowser(chrome_path))
+                    webbrowser.get('chrome').open(url)
+                    opened = True
+                    break
+                except Exception:
+                    pass
+        
+        if not opened:
+            try:
+                # Try registered chrome name
+                webbrowser.get('chrome').open(url)
+            except Exception:
+                # Fallback to system default browser
+                webbrowser.open(url)
+
+    threading.Thread(target=open_browser, daemon=True).start()
+
     import uvicorn
     uvicorn.run("app.main:app", host=config.HOST, port=config.PORT, reload=True)
 

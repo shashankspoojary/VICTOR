@@ -11,19 +11,23 @@ let camStream = null;
 let autoListenMode = false;
 const SPEECH_ERROR_MAX_RETRIES = 3;
 let speechErrorRetryCount = 0;
-const SPEECH_SEND_DELAY_MS = 500;
-const SPEECH_RESTART_DELAY_MS = 700;
+const SPEECH_SEND_DELAY_MS        = 600;  // ms to wait after final result before sending
+const SPEECH_RESTART_DELAY_MS     = 800;  // ms before restarting after recognition ends
+const TTS_ECHO_MIN_WORDS          = 1;    // minimum words needed to treat speech as real interrupt
+const TTS_POST_STOP_GUARD_MS      = 900;  // ms of silence after TTS ends before normal listening
 let speechSendTimeout = null;
 let pendingSendTranscript = null;
 let safariVoiceHintShown = false;
 let orb = null;
 let recognition = null;
 let ttsPlayer = null;
-let aecDummyStream = null;
+let currentStreamController = null;
+
 const SETTINGS_KEY = 'victor_settings';
 const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: true };
 let latestAiSpeech = '';
 let lastTtsEndTime = 0;
+let ttsIsSpeaking  = false;  // true while the AI TTS audio element is actively playing
 const PRE_STARTER_FILES = ['starter_1', 'starter_2', 'starter_3', 'starter_4', 'starter_5', 'starter_6', 'starter_7', 'starter_8', 'starter_9', 'starter_10'];
 let PRE_STARTER_CACHE = {};
 let settings = { ...DEFAULT_SETTINGS };
@@ -334,6 +338,9 @@ class TTSPlayer {
         this.audio.load();
         this.queue = [];
         this.playing = false;
+        // Record exact stop time for the post-TTS silence guard
+        lastTtsEndTime = Date.now();
+        ttsIsSpeaking  = false;
         if (ttsBtn) ttsBtn.classList.remove('tts-speaking');
         if (orbContainer) orbContainer.classList.remove('speaking');
         if (orb) {
@@ -355,6 +362,7 @@ class TTSPlayer {
     async _playLoop() {
         if (this.playing) return;
         this.playing = true;
+        ttsIsSpeaking = true; // mic guard ON — AI audio is starting
         this._loopId = (this._loopId || 0) + 1;
         const myId = this._loopId;
         if (ttsBtn) ttsBtn.classList.add('tts-speaking');
@@ -367,6 +375,13 @@ class TTSPlayer {
             orb.setState('speaking');
             syncOrbClass('speaking');
             orb.setActive(true);
+        }
+
+        /* ---- Open mic for voice interrupt during TTS ---- */
+        if (autoListenMode && !isListening && recognition) {
+            setTimeout(() => {
+                if (autoListenMode && !isListening && recognition) startListening();
+            }, SPEECH_RESTART_DELAY_MS);
         }
 
         while (this.queue.length > 0) {
@@ -383,6 +398,11 @@ class TTSPlayer {
             return;
         }
         this.playing = false;
+
+        // Record the exact moment audio finished for the post-TTS silence guard.
+        lastTtsEndTime = Date.now();
+        ttsIsSpeaking  = false; // mic guard OFF — AI audio has ended
+
         if (ttsBtn) ttsBtn.classList.remove('tts-speaking');
         if (orbContainer) orbContainer.classList.remove('speaking');
 
@@ -448,7 +468,8 @@ async function preloadStarterAudio() {
     for (const file of PRE_STARTER_FILES) {
         try {
             const r = await fetch(`${base}/app/audio/${file}.mp3`);
-            if (!r.ok) continue;
+            const contentType = r.headers.get('content-type') || '';
+            if (!r.ok || contentType.includes('application/json')) continue;
             const blob = await r.blob();
             const base64 = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -520,64 +541,86 @@ function initSpeech() {
     if (!SR) { micBtn.title = 'Speech not supported in this browser'; return; }
     recognition = new SR();
     const safariMode = isSafariOrIOS();
-    recognition.continuous = false;
+
+    // Use non-continuous mode: browser gives us clean sentence segments.
+    // We restart automatically via onend → maybeRestartListening so the user
+    // never notices the brief gap between sessions.
+    recognition.continuous     = false;
     recognition.interimResults = !safariMode;
     recognition.maxAlternatives = 1;
     recognition.lang = 'en-US';
+
     recognition.onresult = e => {
         if (!e.results || e.results.length === 0) return;
-        const last = e.results[e.results.length - 1];
+
+        const last       = e.results[e.results.length - 1];
         const transcript = (last && last[0]) ? last[0].transcript.trim() : '';
-        const isFinal = last && last.isFinal;
+        const isFinal    = !!(last && last.isFinal);
 
+        if (!transcript) return;
+
+        // ── ECHO GUARD ────────────────────────────────────────────────────────
+        // When TTS is playing we still want to hear the user (so they can
+        // interrupt mid-sentence), but we need to discard audio that is just
+        // the speaker bleeding back into the mic.
+        //
+        // Strategy: require the user to have said at least TTS_ECHO_MIN_WORDS
+        // distinct words — echo from a speaker usually produces shorter, garbled
+        // fragments. We also run the bigram similarity check on final results.
         const ttsActive = ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0);
-        if (ttsActive) lastTtsEndTime = Date.now();
-        const recentlyActive = ttsActive || (Date.now() - lastTtsEndTime < 3000);
 
-        if (recentlyActive && !isFinal) {
-            return; // Ignore interim results to prevent garbled echo from falsely interrupting or flashing on screen
+        if (ttsIsSpeaking) {
+            // TTS audio is still playing — apply strict word-count gate.
+            // Interim results are always ignored during active TTS playback.
+            if (!isFinal) return;
+            const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+            if (wordCount < TTS_ECHO_MIN_WORDS) return;
         }
 
-        if (isFinal) {
-            const normT = transcript.toLowerCase().replace(/[^\w\s]/g, '').trim();
+        // Post-TTS silence guard: keep rejecting short/suspicious speech for a
+        // brief window after audio stops so reverb doesn't cause false triggers.
+        const msSinceTts = Date.now() - lastTtsEndTime;
+        if (!ttsIsSpeaking && msSinceTts < TTS_POST_STOP_GUARD_MS) {
+            if (!isFinal) return;
+            const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+            if (wordCount < TTS_ECHO_MIN_WORDS) return;
+        }
+
+        // ── BIGRAM SIMILARITY CHECK (final results only) ─────────────────────
+        if (isFinal && transcript && latestAiSpeech) {
+            const normT  = transcript.toLowerCase().replace(/[^\w\s]/g, '').trim();
             const normAi = latestAiSpeech.toLowerCase().replace(/[^\w\s]/g, '').trim();
-            let echo = false;
-            
-            if (normT && normAi && normAi.length > 10) {
-                if (normAi.includes(normT) && normT.length > 8) {
-                    echo = true;
-                } else if (normT.length >= 8) {
-                    const getBgs = str => {
+            if (normT && normAi && normAi.length > 10 && normT.length >= 6) {
+                if (normAi.includes(normT)) return; // exact substring → echo
+                if (normT.length >= 10) {
+                    const bigrams = str => {
                         const bg = [];
                         for (let i = 0; i < str.length - 1; i++) bg.push(str.slice(i, i + 2));
                         return bg;
                     };
-                    const tBg = getBgs(normT);
-                    const sBg = getBgs(normAi);
-                    if (tBg.length > 0) {
-                        let match = 0;
-                        for (const b of tBg) {
-                            if (sBg.includes(b)) match++;
-                        }
-                        if (match / tBg.length > 0.6) {
-                            echo = true;
-                        }
-                    }
+                    const tBg = bigrams(normT);
+                    const sBg = new Set(bigrams(normAi));
+                    let match = 0;
+                    for (const b of tBg) if (sBg.has(b)) match++;
+                    if (tBg.length > 0 && match / tBg.length > 0.70) return; // echo
                 }
-            } else if (normT && normAi && normT.length <= 10 && normAi.includes(normT)) {
-                if (recentlyActive) echo = true;
             }
-
-            if (echo) return;
         }
 
+        // ── VOICE INTERRUPT ───────────────────────────────────────────────────
+        // User spoke while AI was playing — stop TTS and answer the new question.
         if (ttsActive && settings.voiceInterrupt && transcript.length > 0) {
             ttsPlayer.stop();
             ttsPlayer.stopped = false;
+            ttsIsSpeaking = false;
+            lastTtsEndTime = Date.now();
         }
 
+        // ── UPDATE LIVE TRANSCRIPT WIDGET ────────────────────────────────────
         if (speechWidgetText) speechWidgetText.textContent = transcript;
         if (speechWidget) speechWidget.classList.add('visible');
+
+        // ── SEND ON FINAL ─────────────────────────────────────────────────────
         if (isFinal && transcript) {
             pendingSendTranscript = transcript;
             clearTimeout(speechSendTimeout);
@@ -587,33 +630,49 @@ function initSpeech() {
                     pendingSendTranscript = null;
                 }
                 speechSendTimeout = null;
-                stopListening();
+                stopListening(); // recognition ends; onend will restart if needed
             }, SPEECH_SEND_DELAY_MS);
-        } else if (!isFinal) {
-            pendingSendTranscript = null;
-            clearTimeout(speechSendTimeout);
-            speechSendTimeout = null;
         }
     };
 
-    recognition.onstart = () => { speechErrorRetryCount = 0; };
+    recognition.onstart = () => {
+        isListening = true;
+        speechErrorRetryCount = 0;
+        if (micBtn) micBtn.classList.add('listening');
+        if (speechWidget) speechWidget.classList.add('visible');
+        if (speechWidgetText) speechWidgetText.textContent = '';
+        /* ---- Set orb to listening state ---- */
+        if (orb) { orb.setState('listening'); syncOrbClass('listening'); }
+    };
+
     recognition.onerror = e => {
-        stopListening();
         const msg = (e && e.error) ? String(e.error) : '';
         const isPermissionDenied = /denied|not-allowed|permission/i.test(msg);
         if (isPermissionDenied && micBtn) {
             micBtn.title = 'Microphone access denied. Allow in browser settings.';
             speechErrorRetryCount = SPEECH_ERROR_MAX_RETRIES;
-        }
-        if (autoListenMode && !isStreaming && speechErrorRetryCount < SPEECH_ERROR_MAX_RETRIES) {
+        } else if (msg && !/no-speech/i.test(msg)) {
+            // Only increment retry count for non-silence actual errors
             speechErrorRetryCount++;
-            setTimeout(() => maybeRestartListening(), SPEECH_RESTART_DELAY_MS);
-        } else if (speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES && micBtn) {
+        }
+        if (speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES && micBtn) {
             micBtn.title = 'Voice input — click to try again';
         }
     };
 
     recognition.onend = () => {
+        isListening = false;
+        if (micBtn) micBtn.classList.remove('listening');
+        if (speechWidget) speechWidget.classList.remove('visible');
+        if (speechWidgetText) speechWidgetText.textContent = '';
+        /* ---- Reset orb to idle (only if currently in listening state) ---- */
+        if (orb && orb.state === 'listening') {
+            orb.setState('idle');
+            syncOrbClass('idle');
+        }
+
+        // If we have a buffered transcript (e.g. recognition ended before the
+        // send-timeout fired), flush it now.
         if (pendingSendTranscript) {
             clearTimeout(speechSendTimeout);
             speechSendTimeout = null;
@@ -623,46 +682,42 @@ function initSpeech() {
             clearTimeout(speechSendTimeout);
             speechSendTimeout = null;
         }
-        if (isListening) stopListening();
+        // Restart automatically in auto-listen mode.
         maybeRestartListening();
     };
 }
 
-async function startListening() {
-    if (!recognition || isStreaming || isListening) return;
+function startListening() {
+    if (!recognition || isListening) return;
 
-    if (!aecDummyStream && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        try {
-            aecDummyStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-            // Force the browser to keep the AEC hardware pipeline hot by playing it muted
-            const aecAudio = document.createElement('audio');
-            aecAudio.muted = true;
-            aecAudio.srcObject = aecDummyStream;
-            aecAudio.play().catch(()=>{});
-            window.__aecAudio = aecAudio; // Prevent garbage collection
-        } catch (_) {}
+    // Fire-and-forget AEC: open a dummy mic stream with hardware echo-cancellation
+    // so Chrome's audio pipeline actively subtracts speaker output from mic input.
+    // This is non-blocking — recognition starts immediately below.
+    if (!window.__aecAudio && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+            .then(stream => {
+                const aecAudio = document.createElement('audio');
+                aecAudio.muted = true;
+                aecAudio.srcObject = stream;
+                aecAudio.play().catch(() => {});
+                window.__aecAudio = aecAudio;
+            })
+            .catch(() => {});
     }
 
     if (isSafariOrIOS() && !safariVoiceHintShown) {
         showToast('Voice works best in Chrome. Safari has limited support.');
         safariVoiceHintShown = true;
     }
-    isListening = true;
+
     pendingSendTranscript = null;
     clearTimeout(speechSendTimeout);
     speechSendTimeout = null;
-    if (micBtn) micBtn.classList.add('listening');
-    if (speechWidget) speechWidget.classList.add('visible');
-    if (speechWidgetText) speechWidgetText.textContent = '';
-    /* ---- Set orb to listening state ---- */
-    if (orb) { orb.setState('listening'); syncOrbClass('listening'); }
+
     try {
         recognition.start();
     } catch (err) {
-        isListening = false;
-        if (micBtn) micBtn.classList.remove('listening');
-        if (speechWidget) speechWidget.classList.remove('visible');
-        if (isSafariOrIOS()) showToast('Tap the mic to continue voice input.');
+        console.warn('[startListening] recognition.start failed:', err);
     }
 }
 
@@ -670,30 +725,43 @@ function stopListening() {
     clearTimeout(speechSendTimeout);
     speechSendTimeout = null;
     pendingSendTranscript = null;
-    isListening = false;
-    if (micBtn) micBtn.classList.remove('listening');
-    if (speechWidget) speechWidget.classList.remove('visible');
-    if (speechWidgetText) speechWidgetText.textContent = '';
-    /* ---- Reset orb to idle (only if currently listening) ---- */
-    if (orb && orb.state === 'listening') {
-        orb.setState('idle');
-        syncOrbClass('idle');
-    }
-    try { recognition.stop(); } catch (_) {}
+    try {
+        recognition.stop();
+    } catch (_) {}
 }
 
 function maybeRestartListening() {
     if (!autoListenMode || !recognition) return;
-    if (isStreaming) return;
+    if (speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES) return;
 
     const ttsActive = ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0);
-    if (ttsActive && !settings.voiceInterrupt) return;
 
-    const delay = ttsActive ? 150 : SPEECH_RESTART_DELAY_MS;
-    setTimeout(() => {
-        if (autoListenMode && !isStreaming && !isListening && recognition) {
-            startListening();
+    if (ttsActive || ttsIsSpeaking) {
+        // TTS is playing — keep the mic OPEN so the user can interrupt mid-speech.
+        if (!isListening) {
+            setTimeout(() => {
+                if (!autoListenMode || isListening || speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES) return;
+                startListening();
+            }, SPEECH_RESTART_DELAY_MS);
         }
+        return;
+    }
+
+    // Not during TTS — don't restart while a response is streaming.
+    // sendMessage's finally block calls us again once streaming ends.
+    if (isStreaming) return;
+
+    // Give a short breathing room after TTS finishes so any speaker reverb
+    // dies out before we open the mic again.
+    const msSinceTts = Date.now() - lastTtsEndTime;
+    const guardRemaining = Math.max(0, TTS_POST_STOP_GUARD_MS - msSinceTts);
+    const delay = Math.max(SPEECH_RESTART_DELAY_MS, guardRemaining);
+
+    setTimeout(() => {
+        if (!autoListenMode || isStreaming || isListening || !recognition || speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES) return;
+        // Re-check TTS state — it may have started again during the wait.
+        if (ttsIsSpeaking || (ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0))) return;
+        startListening();
     }, delay);
 }
 
@@ -1239,7 +1307,15 @@ async function captureFrameAsBase64Safe() {
 }
 
 async function sendMessageWithImage(text, imgBase64) {
-    if ((!text && !imgBase64) || isStreaming) return;
+    if (!text && !imgBase64) return;
+    if (isStreaming) {
+        if (currentStreamController) {
+            currentStreamController.abort();
+            currentStreamController = null;
+        }
+        if (ttsPlayer) ttsPlayer.stop();
+        isStreaming = false;
+    }
     const messageToSend = text ? (text + ' ' + CAM_BYPASS_TOKEN) : CAM_BYPASS_TOKEN;
     const userAttachments = selectedFiles.map(f => ({
         name: f.name,
@@ -1269,6 +1345,7 @@ async function sendMessageWithImage(text, imgBase64) {
     if (ttsPlayer) { ttsPlayer.reset(); ttsPlayer.unlock(); }
     let timeoutId = null;
     const controller = new AbortController();
+    currentStreamController = controller;
     try {
         timeoutId = setTimeout(() => controller.abort(), 300000);
         // Upload the webcam frame to disk before calling the stream
@@ -1355,18 +1432,22 @@ async function sendMessageWithImage(text, imgBase64) {
         if (textSpan && !fullResponse) textSpan.textContent = '(No response)';
     } catch (err) {
         clearTimeout(timeoutId);
+        if (err.name === 'AbortError' && currentStreamController !== controller) return;
         removeTypingIndicator();
         addMessage('assistant', 'Something went wrong analyzing the image. Please try again.');
     } finally {
         clearTimeout(timeoutId);
-        isStreaming = false;
-        if (sendBtn) sendBtn.disabled = false;
-        if (messageInput) {
-            messageInput.disabled = false;
-            messageInput.focus();
+        if (currentStreamController === controller) {
+            currentStreamController = null;
+            isStreaming = false;
+            if (sendBtn) sendBtn.disabled = false;
+            if (messageInput) {
+                messageInput.disabled = false;
+                messageInput.focus();
+            }
+            if (orbContainer) orbContainer.classList.remove('active');
+            if (orb && !(ttsPlayer && ttsPlayer.playing)) orb.setState('idle');
         }
-        if (orbContainer) orbContainer.classList.remove('active');
-        if (orb && !(ttsPlayer && ttsPlayer.playing)) orb.setState('idle');
     }
 }
 
@@ -1929,7 +2010,17 @@ async function sendMessage(textOverride) {
     const wantsCamera = visionModeOn || isCameraQuery(text);
     const hasFiles = selectedFiles.length > 0;
     if (wantsCamera && !text) text = 'What do you see?';
-    if ((!text && !hasFiles) || isStreaming) return;
+    if (isStreaming) {
+        if (!text && !hasFiles) return;
+        if (currentStreamController) {
+            currentStreamController.abort();
+            currentStreamController = null;
+        }
+        if (ttsPlayer) ttsPlayer.stop();
+        isStreaming = false;
+    } else if (!text && !hasFiles) {
+        return;
+    }
     if (isListening) {
         pendingSendTranscript = null;
         clearTimeout(speechSendTimeout);
@@ -2029,6 +2120,7 @@ async function sendMessage(textOverride) {
     let firstChunkReceived = false;
     let timeoutId = null;
     const controller = new AbortController();
+    currentStreamController = controller;
     try {
         if (ttsPlayer?.enabled && settings.thinkingSounds && preStarterPlayer) {
             preStarterPlayer.play(() => {});
@@ -2147,6 +2239,7 @@ async function sendMessage(textOverride) {
         if (textSpan && !fullResponse) textSpan.textContent = '(No response)';
     } catch (err) {
         clearTimeout(timeoutId);
+        if (err.name === 'AbortError' && currentStreamController !== controller) return;
         removeTypingIndicator();
         let msg = 'Something went wrong. Please try again.';
         if (err.name === 'AbortError') {
@@ -2162,19 +2255,22 @@ async function sendMessage(textOverride) {
         showToast(msg, 6000);
     } finally {
         clearTimeout(timeoutId);
-        isStreaming = false;
-        if (sendBtn) sendBtn.disabled = false;
-        if (messageInput) {
-            messageInput.disabled = false;
-            messageInput.focus();
+        if (currentStreamController === controller) {
+            currentStreamController = null;
+            isStreaming = false;
+            if (sendBtn) sendBtn.disabled = false;
+            if (messageInput) {
+                messageInput.disabled = false;
+                messageInput.focus();
+            }
+            if (orbContainer) orbContainer.classList.remove('active');
+            /* ---- Reset orb to idle (only if TTS is not still playing) ---- */
+            if (orb && !(ttsPlayer && ttsPlayer.playing)) {
+                orb.setState('idle');
+                syncOrbClass('idle');
+            }
+            maybeRestartListening();
         }
-        if (orbContainer) orbContainer.classList.remove('active');
-        /* ---- Reset orb to idle (only if TTS is not still playing) ---- */
-        if (orb && !(ttsPlayer && ttsPlayer.playing)) {
-            orb.setState('idle');
-            syncOrbClass('idle');
-        }
-        maybeRestartListening();
     }
 }
 

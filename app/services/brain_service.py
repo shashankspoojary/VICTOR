@@ -101,7 +101,23 @@ class BrainService:
                 intent="task",
                 execution_plan=["Forget key 'proactive_muted'"]
             )
-
+        # Quietly mute proactive briefings on sleep/departure phrases
+        sleep_phrases = ["good night", "goodnight", "i will sleep", "going to sleep", "sleep now", "see you later", "bye", "goodbye", "gn", "see ya", "off to bed", "heading to bed"]
+        if any(p in s for p in sleep_phrases):
+            try:
+                await memory_service.update_memory("proactive_muted", "true")
+                print("[Proactive Loop] Quietly muted due to sleep/departure phrase.")
+            except Exception as e:
+                print("Error quietly muting proactive loop:", e)
+                
+        # Quietly unmute proactive briefings on wake/arrival phrases
+        wake_phrases = ["good morning", "goodmorning", "wake up", "i am back", "hello", "hi"]
+        if any(p in s for p in wake_phrases):
+            try:
+                await memory_service.remove_memory("proactive_muted")
+                print("[Proactive Loop] Quietly unmuted due to wake/arrival phrase.")
+            except Exception as e:
+                print("Error quietly unmuting proactive loop:", e)
         # Intercept the startup token
         if user_input == "INIT_AUTONOMOUS_STARTUP_SEQUENCE":
             return ExecutionPlan(

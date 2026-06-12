@@ -17,6 +17,7 @@ const TTS_ECHO_MIN_WORDS          = 1;    // minimum words needed to treat speec
 const TTS_POST_STOP_GUARD_MS      = 900;  // ms of silence after TTS ends before normal listening
 let speechSendTimeout = null;
 let pendingSendTranscript = null;
+let latestTranscript = '';
 let safariVoiceHintShown = false;
 let orb = null;
 let recognition = null;
@@ -24,7 +25,7 @@ let ttsPlayer = null;
 let currentStreamController = null;
 
 const SETTINGS_KEY = 'victor_settings';
-const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: true, autoOpenNewTabs: false };
+const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: false, autoOpenNewTabs: false };
 let latestAiSpeech = '';
 let lastTtsEndTime = 0;
 let ttsIsSpeaking  = false;  // true while the AI TTS audio element is actively playing
@@ -378,10 +379,14 @@ class TTSPlayer {
             orb.setActive(true);
         }
 
+        if (!settings.voiceInterrupt && isListening) {
+            stopListening();
+        }
+
         /* ---- Open mic for voice interrupt during TTS ---- */
-        if (autoListenMode && !isListening && recognition) {
+        if (settings.voiceInterrupt && autoListenMode && !isListening && recognition) {
             setTimeout(() => {
-                if (autoListenMode && !isListening && recognition) startListening();
+                if (settings.voiceInterrupt && autoListenMode && !isListening && recognition) startListening();
             }, SPEECH_RESTART_DELAY_MS);
         }
 
@@ -538,6 +543,51 @@ function isSafariOrIOS() {
 /* ================================================================
    Speech Recognition (Voice Input)
    ================================================================ */
+function isEcho(transcript, isFinal) {
+    if (!transcript) return true;
+
+    const msSinceTts = Date.now() - lastTtsEndTime;
+    const inGuardWindow = ttsIsSpeaking || (msSinceTts < TTS_POST_STOP_GUARD_MS);
+
+    if (!inGuardWindow) {
+        return false; // No echo check if TTS is not active and post-TTS guard window has passed
+    }
+
+    // Word count gate (require at least TTS_ECHO_MIN_WORDS)
+    const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+    if (wordCount < TTS_ECHO_MIN_WORDS) return true;
+
+    // Similarity check against AI speech
+    if (latestAiSpeech) {
+        const normT  = transcript.toLowerCase().replace(/[^\w\s]/g, '').trim();
+        const normAi = latestAiSpeech.toLowerCase().replace(/[^\w\s]/g, '').trim();
+        if (normT && normAi && normAi.length > 10 && normT.length >= 2) {
+            // Exact substring match
+            if (normAi.includes(normT)) return true;
+
+            // Space-insensitive exact match (e.g. "discussPerhaps" vs "discuss perhaps")
+            const normTNoSpace = normT.replace(/\s+/g, '');
+            const normAiNoSpace = normAi.replace(/\s+/g, '');
+            if (normAiNoSpace.includes(normTNoSpace)) return true;
+
+            // Bigram similarity check for longer segments
+            if (normT.length >= 6) {
+                const bigrams = str => {
+                    const bg = [];
+                    for (let i = 0; i < str.length - 1; i++) bg.push(str.slice(i, i + 2));
+                    return bg;
+                };
+                const tBg = bigrams(normT);
+                const sBg = new Set(bigrams(normAi));
+                let match = 0;
+                for (const b of tBg) if (sBg.has(b)) match++;
+                if (tBg.length > 0 && match / tBg.length > 0.70) return true;
+            }
+        }
+    }
+    return false;
+}
+
 function initSpeech() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { micBtn.title = 'Speech not supported in this browser'; return; }
@@ -555,62 +605,25 @@ function initSpeech() {
     recognition.onresult = e => {
         if (!e.results || e.results.length === 0) return;
 
+        // Concatenate all results in the list to build the full transcript
+        let fullTranscript = '';
+        for (let i = 0; i < e.results.length; i++) {
+            if (e.results[i][0]) {
+                fullTranscript += e.results[i][0].transcript;
+            }
+        }
+        const transcript = fullTranscript.trim();
         const last       = e.results[e.results.length - 1];
-        const transcript = (last && last[0]) ? last[0].transcript.trim() : '';
         const isFinal    = !!(last && last.isFinal);
 
         if (!transcript) return;
 
-        // ── ECHO GUARD ────────────────────────────────────────────────────────
-        // When TTS is playing we still want to hear the user (so they can
-        // interrupt mid-sentence), but we need to discard audio that is just
-        // the speaker bleeding back into the mic.
-        //
-        // Strategy: require the user to have said at least TTS_ECHO_MIN_WORDS
-        // distinct words — echo from a speaker usually produces shorter, garbled
-        // fragments. We also run the bigram similarity check on final results.
-        const ttsActive = ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0);
-
-        if (ttsIsSpeaking) {
-            // TTS audio is still playing — apply strict word-count gate.
-            // Interim results are always ignored during active TTS playback.
-            if (!isFinal) return;
-            const wordCount = transcript.split(/\s+/).filter(Boolean).length;
-            if (wordCount < TTS_ECHO_MIN_WORDS) return;
-        }
-
-        // Post-TTS silence guard: keep rejecting short/suspicious speech for a
-        // brief window after audio stops so reverb doesn't cause false triggers.
-        const msSinceTts = Date.now() - lastTtsEndTime;
-        if (!ttsIsSpeaking && msSinceTts < TTS_POST_STOP_GUARD_MS) {
-            if (!isFinal) return;
-            const wordCount = transcript.split(/\s+/).filter(Boolean).length;
-            if (wordCount < TTS_ECHO_MIN_WORDS) return;
-        }
-
-        // ── BIGRAM SIMILARITY CHECK (final results only) ─────────────────────
-        if (isFinal && transcript && latestAiSpeech) {
-            const normT  = transcript.toLowerCase().replace(/[^\w\s]/g, '').trim();
-            const normAi = latestAiSpeech.toLowerCase().replace(/[^\w\s]/g, '').trim();
-            if (normT && normAi && normAi.length > 10 && normT.length >= 6) {
-                if (normAi.includes(normT)) return; // exact substring → echo
-                if (normT.length >= 10) {
-                    const bigrams = str => {
-                        const bg = [];
-                        for (let i = 0; i < str.length - 1; i++) bg.push(str.slice(i, i + 2));
-                        return bg;
-                    };
-                    const tBg = bigrams(normT);
-                    const sBg = new Set(bigrams(normAi));
-                    let match = 0;
-                    for (const b of tBg) if (sBg.has(b)) match++;
-                    if (tBg.length > 0 && match / tBg.length > 0.70) return; // echo
-                }
-            }
-        }
+        // Run the echo check. If it is an echo, ignore this result completely.
+        if (isEcho(transcript, isFinal)) return;
 
         // ── VOICE INTERRUPT ───────────────────────────────────────────────────
         // User spoke while AI was playing — stop TTS and answer the new question.
+        const ttsActive = ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0);
         if (ttsActive && settings.voiceInterrupt && transcript.length > 0) {
             ttsPlayer.stop();
             ttsPlayer.stopped = false;
@@ -622,6 +635,8 @@ function initSpeech() {
         if (speechWidgetText) speechWidgetText.textContent = transcript;
         if (speechWidget) speechWidget.classList.add('visible');
 
+        latestTranscript = transcript;
+
         // ── SEND ON FINAL ─────────────────────────────────────────────────────
         if (isFinal && transcript) {
             pendingSendTranscript = transcript;
@@ -631,6 +646,7 @@ function initSpeech() {
                     sendMessage(pendingSendTranscript);
                     pendingSendTranscript = null;
                 }
+                latestTranscript = '';
                 speechSendTimeout = null;
                 stopListening(); // recognition ends; onend will restart if needed
             }, SPEECH_SEND_DELAY_MS);
@@ -678,8 +694,18 @@ function initSpeech() {
         if (pendingSendTranscript) {
             clearTimeout(speechSendTimeout);
             speechSendTimeout = null;
-            sendMessage(pendingSendTranscript);
+            if (!isEcho(pendingSendTranscript, true)) {
+                sendMessage(pendingSendTranscript);
+            }
             pendingSendTranscript = null;
+            latestTranscript = '';
+        } else if (latestTranscript) {
+            clearTimeout(speechSendTimeout);
+            speechSendTimeout = null;
+            if (!isEcho(latestTranscript, false)) {
+                sendMessage(latestTranscript);
+            }
+            latestTranscript = '';
         } else {
             clearTimeout(speechSendTimeout);
             speechSendTimeout = null;
@@ -692,20 +718,7 @@ function initSpeech() {
 function startListening() {
     if (!recognition || isListening) return;
 
-    // Fire-and-forget AEC: open a dummy mic stream with hardware echo-cancellation
-    // so Chrome's audio pipeline actively subtracts speaker output from mic input.
-    // This is non-blocking — recognition starts immediately below.
-    if (!window.__aecAudio && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-            .then(stream => {
-                const aecAudio = document.createElement('audio');
-                aecAudio.muted = true;
-                aecAudio.srcObject = stream;
-                aecAudio.play().catch(() => {});
-                window.__aecAudio = aecAudio;
-            })
-            .catch(() => {});
-    }
+
 
     if (isSafariOrIOS() && !safariVoiceHintShown) {
         showToast('Voice works best in Chrome. Safari has limited support.');
@@ -713,6 +726,7 @@ function startListening() {
     }
 
     pendingSendTranscript = null;
+    latestTranscript = '';
     clearTimeout(speechSendTimeout);
     speechSendTimeout = null;
 
@@ -739,12 +753,17 @@ function maybeRestartListening() {
     const ttsActive = ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0);
 
     if (ttsActive || ttsIsSpeaking) {
-        // TTS is playing — keep the mic OPEN so the user can interrupt mid-speech.
-        if (!isListening) {
-            setTimeout(() => {
-                if (!autoListenMode || isListening || speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES) return;
-                startListening();
-            }, SPEECH_RESTART_DELAY_MS);
+        if (settings.voiceInterrupt) {
+            // TTS is playing — keep the mic OPEN so the user can interrupt mid-speech.
+            if (!isListening) {
+                setTimeout(() => {
+                    if (!autoListenMode || isListening || speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES) return;
+                    if (ttsIsSpeaking || (ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0))) {
+                        if (!settings.voiceInterrupt) return;
+                    }
+                    startListening();
+                }, SPEECH_RESTART_DELAY_MS);
+            }
         }
         return;
     }
@@ -2081,6 +2100,7 @@ async function sendMessage(textOverride) {
     }
     if (isListening) {
         pendingSendTranscript = null;
+        latestTranscript = '';
         clearTimeout(speechSendTimeout);
         speechSendTimeout = null;
         stopListening();

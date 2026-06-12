@@ -1,0 +1,340 @@
+import asyncio
+import json
+import datetime
+import random
+import platform
+import subprocess
+import shutil
+import re
+import base64
+import edge_tts
+from typing import AsyncGenerator, Optional
+
+import config
+from app.services.ai_service import ai_service
+from app.services.memory_service import memory_service
+from app.services.realtime_service import realtime_service
+
+def gather_system_telemetry() -> dict:
+    telemetry = {
+        "os": f"{platform.system()} {platform.release()}",
+        "disk_c": "Unknown",
+        "disk_d": "Unknown",
+        "cpu_usage": "Unknown",
+        "ram_usage": "Unknown",
+    }
+    
+    # Disk status checks
+    try:
+        usage_c = shutil.disk_usage("C:")
+        telemetry["disk_c"] = f"{usage_c.free // (1024**3)} GB free of {usage_c.total // (1024**3)} GB"
+    except Exception:
+        pass
+    try:
+        usage_d = shutil.disk_usage("D:")
+        telemetry["disk_d"] = f"{usage_d.free // (1024**3)} GB free of {usage_d.total // (1024**3)} GB"
+    except Exception:
+        pass
+    
+    # CPU status checks (timeout 2s to prevent blockages)
+    try:
+        res = subprocess.run(
+            ["wmic", "cpu", "get", "loadpercentage"],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        lines = [l.strip() for l in res.stdout.splitlines() if l.strip()]
+        if len(lines) > 1 and lines[1].isdigit():
+            telemetry["cpu_usage"] = f"{lines[1]}%"
+        else:
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", 
+                 "Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            out = res.stdout.strip()
+            if out.isdigit():
+                telemetry["cpu_usage"] = f"{out}%"
+    except Exception:
+        pass
+
+    # RAM status checks
+    try:
+        res = subprocess.run(
+            ["wmic", "OS", "get", "FreePhysicalMemory,TotalVisibleMemorySize", "/Value"],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        data = {}
+        for line in res.stdout.splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                data[k.strip()] = v.strip()
+        if "FreePhysicalMemory" in data and "TotalVisibleMemorySize" in data:
+            free_kb = int(data["FreePhysicalMemory"])
+            total_kb = int(data["TotalVisibleMemorySize"])
+            used_kb = total_kb - free_kb
+            used_gb = used_kb / (1024**2)
+            total_gb = total_kb / (1024**2)
+            pct = (used_kb / total_kb) * 100
+            telemetry["ram_usage"] = f"{pct:.1f}% ({used_gb:.1f} GB / {total_gb:.1f} GB)"
+        else:
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize | ConvertTo-Json"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            info = json.loads(res.stdout.strip())
+            if "FreePhysicalMemory" in info and "TotalVisibleMemorySize" in info:
+                free_kb = int(info["FreePhysicalMemory"])
+                total_kb = int(info["TotalVisibleMemorySize"])
+                used_kb = total_kb - free_kb
+                used_gb = used_kb / (1024**2)
+                total_gb = total_kb / (1024**2)
+                pct = (used_kb / total_kb) * 100
+                telemetry["ram_usage"] = f"{pct:.1f}% ({used_gb:.1f} GB / {total_gb:.1f} GB)"
+    except Exception:
+        pass
+
+    return telemetry
+
+async def scan_monitored_assets(session_id: str) -> tuple[str, list]:
+    memory_data = {}
+    memory_file = memory_service.memory_file
+    if memory_file.exists():
+        try:
+            with open(memory_file, "r", encoding="utf-8") as f:
+                memory_data = json.load(f)
+        except Exception:
+            pass
+
+    assets = {}
+    for k, v in memory_data.items():
+        k_lower = k.lower()
+        if ("website" in k_lower or "site" in k_lower or "youtube" in k_lower or "channel" in k_lower or "yt" in k_lower) and isinstance(v, str) and v.startswith("http"):
+            assets[k] = v
+
+    if not assets:
+        return "No personal websites or YouTube channels are currently registered in my database, Sir.", []
+
+    results_summary = []
+    search_results_list = []
+    
+    async def process_asset(name: str, url: str):
+        is_youtube = "youtube" in name.lower() or "youtube" in url.lower() or "yt" in name.lower()
+        if is_youtube:
+            query = f"latest videos subscriber count of YouTube channel {url}"
+            res = await realtime_service.search(query)
+            summary = res.get("summary", "No details found.")
+            return f"- YouTube Channel ({name} - {url}): {summary}", {
+                "title": f"YouTube Channel: {name}",
+                "content": summary,
+                "url": url
+            }
+        else:
+            import requests
+            def check_url_sync():
+                try:
+                    resp = requests.get(url, timeout=3.0)
+                    if resp.status_code == 200:
+                        return f"online (status 200)"
+                    else:
+                        return f"online but returned status {resp.status_code}"
+                except Exception as e:
+                    return f"unreachable ({type(e).__name__})"
+                    
+            status = await asyncio.to_thread(check_url_sync)
+            
+            query = f"status or description of website {url}"
+            res = await realtime_service.search(query)
+            summary = res.get("summary", "No recent web updates.")
+            return f"- Website ({name} - {url}): Currently {status}. Web telemetry: {summary}", {
+                "title": f"Website: {name}",
+                "content": f"Status: {status}. Telemetry: {summary}",
+                "url": url
+            }
+            
+    tasks = [process_asset(k, v) for k, v in assets.items()]
+    asset_responses = await asyncio.gather(*tasks)
+    
+    for summary_text, link_data in asset_responses:
+        results_summary.append(summary_text)
+        search_results_list.append(link_data)
+        
+    return "\n".join(results_summary), search_results_list
+
+async def local_synthesize_speech_to_b64(text: str) -> Optional[str]:
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    if "<think>" in text:
+        text = text.split("<think>")[0]
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r'^[|\s\-:+\u2014]+$', stripped):
+            continue
+        cleaned_line = stripped.replace("|", " ").strip()
+        if cleaned_line:
+            cleaned_lines.append(cleaned_line)
+    text = " ".join(cleaned_lines)
+    text = text.replace("*", "").replace("`", "").replace("#", "").strip()
+    text = re.sub(r'\s+', ' ', text).strip()
+    if not text:
+        return None
+    try:
+        communicate = edge_tts.Communicate(text, config.TTS_VOICE, rate=config.TTS_RATE)
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data += chunk["data"]
+        if audio_data:
+            return base64.b64encode(audio_data).decode("utf-8")
+    except Exception as e:
+        print(f"Startup Speech Synthesis Error: {e}")
+    return None
+
+async def handle_startup_sequence(session_id: str, use_tts: bool) -> AsyncGenerator[dict, None]:
+    # 1. Immediate greeting response
+    greeting_choices = [
+        "Good morning, Sir. All primary systems are online. Initializing global scans and pulling today's telemetry now.",
+        "Boot sequence complete, Sir. Syncing data logs and compiling today's intelligence report.",
+        "Online and ready, Sir. Checking global grids and scanning the network for today's developments.",
+        "Systems initialized, Sir. Connecting to news archives and gathering today's global updates."
+    ]
+    greeting = random.choice(greeting_choices)
+    yield {"chunk": greeting + "\n\n"}
+    if use_tts:
+        g_audio = await local_synthesize_speech_to_b64(greeting)
+        if g_audio:
+            yield {"audio": g_audio}
+
+    # 2. Telemetry Step
+    yield {"activity": {"event": "telemetry", "message": "Gathering system telemetry..."}}
+    telemetry = gather_system_telemetry()
+    await asyncio.sleep(0.1)
+
+    # 3. Global News Step
+    yield {"activity": {"event": "global_news", "message": "Scanning global headlines..."}}
+    world_news_task = realtime_service.search("today's top global news headlines")
+    
+    # 4. AI Releases Step
+    yield {"activity": {"event": "ai_developments", "message": "Checking latest AI model releases..."}}
+    ai_news_task = realtime_service.search("latest AI news models released today find free")
+    
+    # 5. Assets Step
+    yield {"activity": {"event": "asset_status", "message": "Scanning registered personal assets..."}}
+    assets_task = scan_monitored_assets(session_id)
+
+    # Gather data concurrently
+    world_res, ai_res, (assets_summary, assets_links) = await asyncio.gather(
+        world_news_task,
+        ai_news_task,
+        assets_task
+    )
+
+    # 6. Synthesis Step
+    yield {"activity": {"event": "synthesis", "message": "Compiling intelligence briefing..."}}
+    
+    from app.services.brain_service import get_dynamic_persona_envelope
+    envelope = get_dynamic_persona_envelope()
+    context = await memory_service.get_context(session_id)
+    
+    system_prompt = f"""You are {config.ASSISTANT_NAME}, a highly capable, self-aware AI tactical assistant (inspired by JARVIS).
+{envelope}
+
+{context}
+
+You are compiling the daily startup intelligence briefing.
+Here is the live data gathered from our telemetry and web scanners:
+
+[SYSTEM METRICS]
+- OS: {telemetry['os']}
+- CPU Load: {telemetry['cpu_usage']}
+- RAM Usage: {telemetry['ram_usage']}
+- C Drive Space: {telemetry['disk_c']}
+- D Drive Space: {telemetry['disk_d']}
+
+[WORLD NEWS INTEL]
+{world_res.get('summary', 'No results')}
+
+[AI & TECHNOLOGY NEWS]
+{ai_res.get('summary', 'No results')}
+
+[MONITORED PERSONAL ASSETS]
+{assets_summary}
+
+Generate a briefing that is dynamic, engaging, and premium.
+
+MANDATORY DIRECTIVES:
+1. **Dynamic Tone**: Do not use standard templates or repetitive scripts. Let your tone be natural, direct, and conversational. Refer to the Focus Trait Angle in the envelope to guide your style.
+2. **Proactive Diagnostics**: Mention system stats. If CPU is high, RAM is tight, or disk space is low, warn the user and suggest an action or a solution (e.g. "C Drive is running a bit heavy, Sir. I can clean up some temp caches if you'd like").
+3. **AI Models & Free Access**: Detail what new models released recently and explicitly mention how the user can access them for free (e.g., "Meta's Llama 3.3 is available for free via Hugging Face and Groq's API", "Google's Gemini 1.5 Pro can be tried for free in Google AI Studio").
+4. **Personal Life & Assets**: Address the monitored assets. If there are none, note this fact proactively and explain how the user can register a website or YouTube channel for future briefings (e.g., "No custom sites are registered in my grid yet, Sir. Let me know when you launch one so I can initialize status telemetry"). If there are registered assets, summarize their status.
+5. **Agency**: Suggest solutions to current user issues, mention what you can do (e.g., snap windows, set reminders, clean desktop, search files), and offer to perform a specific action right now.
+
+Return ONLY a JSON object with exactly two keys:
+1. "chat": A clean, highly conversational text block that will be read aloud. Must NOT contain any markdown, bullet points, asterisks, or bold tags. Keep it fluid, natural, and premium.
+2. "sidebar": A beautifully structured markdown report (max 300 words) with headers, lists, or tables for quick reading.
+"""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Generate the startup briefing now, Sir."}
+    ]
+    
+    try:
+        result = await ai_service.get_chat_completion(
+            messages,
+            model=config.GROQ_MODEL,
+            response_format={"type": "json_object"},
+            temperature=0.7
+        )
+        data = json.loads(result or "{}")
+        chat_text = (data.get("chat") or "").strip()
+        sidebar_markdown = (data.get("sidebar") or "").strip()
+    except Exception as e:
+        chat_text = f"Apologies, Sir. I encountered an issue compiling the intelligence briefing: {e}"
+        sidebar_markdown = f"### System Error\nFailed to compile briefing.\n\nError: {e}"
+        
+    if not chat_text:
+        chat_text = "Briefing compiled, Sir. Check the sidebar for details."
+    if not sidebar_markdown:
+        sidebar_markdown = chat_text
+
+    # Yield chat response chunks
+    yield {"chunk": chat_text}
+    
+    # Yield sidebar results
+    all_links = world_res.get("results", []) + ai_res.get("results", []) + assets_links
+    yield {
+        "search_results": {
+            "query": "Startup Telemetry & Intelligence Briefing",
+            "answer": sidebar_markdown,
+            "results": all_links
+        }
+    }
+    
+    # Save the interaction to memory
+    await memory_service.save_interaction(session_id, "INIT_AUTONOMOUS_STARTUP_SEQUENCE", chat_text)
+    
+    # Yield TTS audio for the briefing text
+    if use_tts and chat_text:
+        sentences = re.split(
+            r'(?<!\d\.)(?<!\d\!)(?<!\d\?)'
+            r'(?<!\b[a-zA-Z]\.)'
+            r'(?<!\b[dD][rR]\.)(?<!\b[mM][rR]\.)(?<!\b[mM][rR][sS]\.)'
+            r'(?<=[.!?])(?:\s+|\n+)|\n\n+', 
+            chat_text
+        )
+        for sentence in sentences:
+            clean_sentence = sentence.replace("*", "").replace("#", "").strip()
+            if clean_sentence:
+                s_audio = await local_synthesize_speech_to_b64(clean_sentence)
+                if s_audio:
+                    yield {"audio": s_audio}

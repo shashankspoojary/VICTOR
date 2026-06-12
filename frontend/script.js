@@ -25,7 +25,7 @@ let ttsPlayer = null;
 let currentStreamController = null;
 
 const SETTINGS_KEY = 'victor_settings';
-const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: false, autoOpenNewTabs: false };
+const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: false, autoOpenNewTabs: false, proactiveBriefings: true };
 let latestAiSpeech = '';
 let lastTtsEndTime = 0;
 let ttsIsSpeaking  = false;  // true while the AI TTS audio element is actively playing
@@ -88,6 +88,7 @@ const toggleAutoSearch    = $('toggle-auto-search');
 const toggleThinkingSounds = $('toggle-thinking-sounds');
 const toggleVoiceInterrupt = $('toggle-voice-interrupt');
 const toggleAutoOpenTabs  = $('toggle-auto-open-tabs');
+const toggleProactiveBriefings = $('toggle-proactive-briefings');
 const toastContainer     = $('toast-container');
 const uploadBtn          = $('upload-btn');
 const fileInput          = $('file-input');
@@ -467,7 +468,12 @@ function init() {
     setMode(currentMode);
     autoResizeInput();
     if (messageInput) messageInput.focus();
+    
+    // Trigger autonomous startup sequence on connection initialization
+    sendMessage("INIT_AUTONOMOUS_STARTUP_SEQUENCE");
+    initProactiveCheck();
 }
+
 
 async function preloadStarterAudio() {
     const base = (typeof window !== 'undefined' && window.location.origin) ? window.location.origin : '';
@@ -500,6 +506,7 @@ function loadSettings() {
         if (toggleThinkingSounds) toggleThinkingSounds.checked = settings.thinkingSounds;
         if (toggleVoiceInterrupt) toggleVoiceInterrupt.checked = settings.voiceInterrupt;
         if (toggleAutoOpenTabs) toggleAutoOpenTabs.checked = settings.autoOpenNewTabs;
+        if (toggleProactiveBriefings) toggleProactiveBriefings.checked = settings.proactiveBriefings;
     } catch (_) {}
 }
 
@@ -1655,6 +1662,12 @@ function bindEvents() {
             saveSettings();
         });
     }
+    if (toggleProactiveBriefings) {
+        toggleProactiveBriefings.addEventListener('change', () => {
+            settings.proactiveBriefings = toggleProactiveBriefings.checked;
+            saveSettings();
+        });
+    }
     if (panelOverlay) {
         panelOverlay.addEventListener('click', () => {
             if (activityPanel) activityPanel.classList.remove('open');
@@ -2174,7 +2187,9 @@ async function sendMessage(textOverride) {
     messageInput.value = '';
     autoResizeInput();
     charCount.textContent = '';
-    addMessage('user', text || '(File upload)', userAttachments);
+    if (text !== "INIT_AUTONOMOUS_STARTUP_SEQUENCE") {
+        addMessage('user', text || '(File upload)', userAttachments);
+    }
     clearSelectedFiles();
     addTypingIndicator();
     isStreaming = true;
@@ -2212,6 +2227,7 @@ async function sendMessage(textOverride) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message: messageToSend,
+                user_input: messageToSend === "INIT_AUTONOMOUS_STARTUP_SEQUENCE" ? "INIT_AUTONOMOUS_STARTUP_SEQUENCE" : undefined,
                 session_id: sessionId,
                 tts: !!(ttsPlayer && ttsPlayer.enabled),
                 imgbase64: imgBase64 || null,
@@ -2351,6 +2367,39 @@ async function sendMessage(textOverride) {
             maybeRestartListening();
         }
     }
+}
+
+let lastProactiveTime = Date.now();
+function initProactiveCheck() {
+    setInterval(async () => {
+        if (!settings.proactiveBriefings) return;
+        if (isStreaming || (ttsPlayer && ttsPlayer.playing)) {
+            return;
+        }
+        const now = Date.now();
+        if (now - lastProactiveTime < 180000) {
+            return;
+        }
+        try {
+            const res = await fetch(`${API}/chat/victor/proactive`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    tts: !!(ttsPlayer && ttsPlayer.enabled)
+                })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.should_activate) {
+                    lastProactiveTime = Date.now();
+                    sendMessage(`TRIGGER_PROACTIVE_BRIEFING: ${data.reason}`);
+                }
+            }
+        } catch (e) {
+            console.error("Proactive check failed:", e);
+        }
+    }, 60000);
 }
 
 document.addEventListener('DOMContentLoaded', init);

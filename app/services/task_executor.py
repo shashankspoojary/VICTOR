@@ -761,6 +761,13 @@ class TaskExecutor:
                 url = search_target if search_target.startswith("http") else f"https://{search_target}"
                 return {"action": "open_url", "param": url}
 
+        # --- Git Commands ---
+        if s.startswith("git ") or s == "git" or s.startswith("git:"):
+            cmd = step
+            if s.startswith("git:"):
+                cmd = "git " + step[4:].strip()
+            return {"action": "git_run", "cmd": cmd}
+
         # --- Research (default for info/search queries) ---
         query = re.sub(
             r'^(search for|search|look up|find|research|get|check|what is|tell me about)\s+',
@@ -772,7 +779,40 @@ class TaskExecutor:
         action = primitive.get("action")
         param = primitive.get("param")
         
-        if action == "memorize":
+        if action == "git_run":
+            import shlex
+            cmd_str = primitive.get("cmd", "")
+            if not cmd_str.lower().startswith("git"):
+                cmd_str = f"git {cmd_str}"
+            try:
+                args = shlex.split(cmd_str)
+            except Exception:
+                args = cmd_str.split()
+            console.print(f"[magenta]Running Git Command:[/magenta] {cmd_str}")
+            if event_queue:
+                await event_queue.put({"type": "task_status", "step": f"Running: {cmd_str}", "status": "running"})
+            try:
+                res = await asyncio.to_thread(
+                    subprocess.run,
+                    args,
+                    cwd="D:\\VICTOR",
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
+                output = res.stdout
+                if res.stderr:
+                    output += f"\n{res.stderr}"
+                output = output.strip() or "[No output returned from command]"
+                console.print(f"[blue]Git Output:[/blue]\n{output}")
+                if event_queue:
+                    await event_queue.put({"type": "token", "text": f"Git command executed, Sir. Output:\n\n```\n{output}\n```"})
+            except Exception as e:
+                console.print(f"[bold red]Git Command Error:[/bold red] {e}")
+                if event_queue:
+                    await event_queue.put({"type": "token", "text": f"Sorry Sir, the Git command failed: {e}"})
+
+        elif action == "memorize":
             param_key = primitive.get("key")
             param_value = primitive.get("value")
             await memory_service.update_memory(param_key, param_value)

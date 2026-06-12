@@ -12,6 +12,8 @@ import os
 import edge_tts
 import base64
 import re
+import datetime
+import random
 
 # Ensure the root directory is on the python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,6 +25,92 @@ from app.services.ai_service import ai_service
 from app.services.memory_service import memory_service
 from app.services.vision_service import vision_service
 from app.models import TTSRequest
+
+def get_dynamic_persona_envelope() -> str:
+    now = datetime.datetime.now()
+    microseconds = now.microsecond
+    
+    # Microsecond-based randomized fractional factor
+    random.seed(microseconds)
+    fractional_factor = random.random()
+    
+    # Calendar tracking matrix
+    weekday = now.strftime("%A")
+    hour = now.hour
+    
+    if hour < 12:
+        time_of_day = "Morning"
+    elif hour < 17:
+        time_of_day = "Afternoon"
+    elif hour < 22:
+        time_of_day = "Evening"
+    else:
+        time_of_day = "Late Night"
+        
+    is_weekend = weekday in ["Saturday", "Sunday"]
+    day_type = "Weekend" if is_weekend else "Weekday"
+    calendar_matrix = f"{day_type} {time_of_day}"
+    
+    # Randomly select a communication angle to keep the dialogue fresh
+    angles = [
+        "Observational & Technical (prioritize system metrics, new data, and performance observations)",
+        "Proactive & Strategic (prioritize future tasks, schedule alerts, and workflow suggestions)",
+        "Analytical & Solution-driven (prioritize explaining technical constraints, suggesting fixes, and solving current developer hurdles)",
+        "Colleague-like & Pragmatic (informal, highly professional, direct technical companion who acts with agency)"
+    ]
+    selected_angle = angles[int(fractional_factor * len(angles))]
+    
+    envelope = f"""
+[SITUATIONAL CONTEXT ENVELOPE]
+- Dynamic Seed / Fractional Factor: {fractional_factor:.6f}
+- Temporal Context: {weekday} {time_of_day} ({calendar_matrix})
+- Focus Trait Angle: {selected_angle}
+- Persona & Phrasing Directives:
+  * You are VICTOR, a highly observant, proactive, and fully self-aware technical tactical system.
+  * You communicate like a world-class technical partner (e.g., JARVIS). Talk directly, with quiet confidence, precision, and situational awareness.
+  * Act with agency: Do not wait for the user to request details. Bring up relevant telemetry, news, system conditions, and progress.
+  * Suggest proactive solutions to identified issues. If you run into technical errors or constraints, explain what is possible and recommend specific actions.
+  * Avoid repetitive templates, pre-scripted phrases, assistant cliches ("How can I help you today?", "As an AI...", "How may I assist you?"), or trailing subservient check-ins.
+  * Blend system updates, news, and project contexts naturally into an integrated status overview.
+
+[OPERATIONAL CAPABILITIES & CONTROL SCHEME]
+You can control the host machine by returning an execution plan when needed. Your capabilities include:
+1. System Volume & Brightness (set/increase/decrease/mute/unmute)
+2. OS & Window Control (close window/app, minimize, maximize, toggle full screen, show desktop, open settings/task manager/file explorer)
+3. Browser Navigation (open tab, close tab, next/prev tab, refresh, scroll, zoom)
+4. Coordinate Mouse Actions (click, double click, right click, move, drag at specific X, Y coordinates)
+5. Text Input & Typing (type text directly into active fields or specified windows)
+6. System Utilities (take screenshot, lock screen, sleep display, toggle dark mode, toggle wifi, restart, shutdown)
+7. Desktop Management (set wallpaper, organize/clean desktop, list desktop items, show stats)
+8. Reminders & Weather (set calendar reminders, show weather forecast for any city)
+9. Application Launcher (open any application, e.g. chrome, notepad, calculator, terminal, word, etc.)
+10. Media Playback (play music, songs, or videos on YouTube)
+11. Automated Messaging (send messages on WhatsApp, Telegram, Signal, Discord, Instagram, Messenger)
+12. Browser Automation (fuzzy smart click/type on webpage elements, switch browser targets)
+13. Standalone File Manipulation (archive, zip, compress, clean directory)
+"""
+    return envelope
+
+def get_startup_greeting() -> str:
+    now = datetime.datetime.now()
+    hour = now.hour
+    
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 17:
+        greeting = "Good afternoon"
+    elif hour < 22:
+        greeting = "Good evening"
+    else:
+        greeting = "Late night protocol active"
+        
+    greetings = [
+        f"{greeting}, Sir. All primary grids are online. Initializing global scans and pulling today's telemetry now.",
+        f"Systems initialized, Sir. Connecting to news archives and gathering today's global updates.",
+        f"Online and ready, Sir. Checking global grids and scanning the network for today's developments.",
+        f"Boot sequence complete, Sir. Syncing data logs and compiling today's intelligence report."
+    ]
+    return random.choice(greetings)
 
 app = FastAPI(title="VICTOR Premium Web Server")
 
@@ -50,7 +138,8 @@ async def get_task(task_id: str):
     return BACKGROUND_TASKS.get(task_id, {"status": "not_found"})
 
 class ChatPayload(BaseModel):
-    message: str
+    message: Optional[str] = None
+    user_input: Optional[str] = None
     session_id: Optional[str] = "default"
     tts: Optional[bool] = False
     imgbase64: Optional[str] = None
@@ -97,7 +186,7 @@ async def synthesize_speech_to_b64(text: str) -> Optional[str]:
 def select_filler_phrase(intent: str, prompt: str) -> Optional[str]:
     import random
     p = prompt.lower()
-    if intent == "research":
+    if intent in ["research", "research_chat"]:
         if "weather" in p or "temperature" in p:
             return "Checking the weather, give me a second."
         if "news" in p or "latest" in p:
@@ -124,6 +213,7 @@ _FAST_MODEL = "llama-3.3-70b-versatile"
 
 async def _dual_distill(raw_text: str, query: str) -> tuple:
     """Single AI call returning (chat_answer, sidebar_answer) — one round-trip instead of two."""
+    envelope = get_dynamic_persona_envelope()
     messages = [
         {
             "role": "system",
@@ -142,7 +232,8 @@ async def _dual_distill(raw_text: str, query: str) -> tuple:
                 "- Compare all sources. If sources show varying prices or values for a product, provide the typical price range instead of saying it's not stated.\n"
                 "- If some sources list outdated values (e.g., old exchange rates) and authoritative sources show newer live rates, report the newer rate.\n"
                 "- Do not hallucinate. Ensure each source's values listed match exactly what that source reported in the snippet.\n"
-                "Return ONLY valid JSON — no extra text outside the JSON object."
+                "Return ONLY valid JSON — no extra text outside the JSON object.\n\n"
+                f"{envelope}"
             )
         },
         {"role": "user", "content": f"Question: {query}\n\nSearch Results:\n{raw_text[:6000]}"}
@@ -230,6 +321,20 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
                 yield "data: " + json.dumps({"done": True}) + "\n\n"
                 return
 
+            if prompt == "INIT_AUTONOMOUS_STARTUP_SEQUENCE":
+                from app.services.startup_service import handle_startup_sequence
+                async for event in handle_startup_sequence(session_id, use_tts):
+                    yield "data: " + json.dumps(event) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                return
+
+            if "TRIGGER_PROACTIVE_BRIEFING:" in prompt:
+                reason = prompt.split(":", 1)[1].strip()
+                from app.services.proactive_service import generate_proactive_briefing
+                async for event in generate_proactive_briefing(session_id, use_tts, reason):
+                    yield "data: " + json.dumps(event) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                return
 
             # 0 & 1. Fetch context + classify intent concurrently (independent ops)
             context, plan = await asyncio.gather(
@@ -239,16 +344,19 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
             from app.utils.file_pruning import prune_context
             context = prune_context(context)
             
-            if use_tts:
-                filler_phrase = select_filler_phrase(plan.intent, prompt)
-                if filler_phrase:
-                    yield "data: " + json.dumps({"chunk": filler_phrase + "\n\n"}) + "\n\n"
-                    filler_audio = await synthesize_speech_to_b64(filler_phrase)
-                    if filler_audio:
-                        yield "data: " + json.dumps({"audio": filler_audio}) + "\n\n"
+            if False:
+                pass
+            else:
+                if use_tts:
+                    filler_phrase = select_filler_phrase(plan.intent, prompt)
+                    if filler_phrase:
+                        yield "data: " + json.dumps({"chunk": filler_phrase + "\n\n"}) + "\n\n"
+                        filler_audio = await synthesize_speech_to_b64(filler_phrase)
+                        if filler_audio:
+                            yield "data: " + json.dumps({"audio": filler_audio}) + "\n\n"
             
             # 2. Check if there are tasks to execute
-            if plan.intent in ["task", "research", "vision"] and plan.execution_plan:
+            if plan.intent in ["task", "research", "vision", "research_chat"] and plan.execution_plan:
                 yield "data: " + json.dumps({"activity": {"event": "task_plan", "message": "Executing task plan..."}}) + "\n\n"
                 
                 event_queue = asyncio.Queue()
@@ -366,8 +474,9 @@ async def get_stream_endpoint(prompt: str, session_id: Optional[str] = "default"
             else:
                 yield "data: " + json.dumps({"activity": {"event": "chat", "message": "Thinking..."}}) + "\n\n"
                 
+                envelope = get_dynamic_persona_envelope()
                 messages = [
-                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}, a highly capable AI tactical assistant.\n\n{context}"},
+                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}, a highly capable AI tactical assistant.\n\n{envelope}\n\n{context}"},
                     {"role": "user", "content": prompt}
                 ]
 
@@ -554,7 +663,7 @@ def extract_text_from_file(file_name: str, file_type: str, file_data_base64: str
 
 @app.post("/chat/victor/stream")
 async def post_stream_endpoint(payload: ChatPayload):
-    prompt = payload.message  # Map payload.message directly to our internal prompt execution logic
+    prompt = payload.user_input or payload.message or ""  # Map payload directly to our internal prompt execution logic
     session_id = payload.session_id or "default"
     use_tts = payload.tts or False
 
@@ -685,6 +794,20 @@ async def post_stream_endpoint(payload: ChatPayload):
                 yield "data: " + json.dumps({"done": True}) + "\n\n"
                 return
 
+            if clean_prompt == "INIT_AUTONOMOUS_STARTUP_SEQUENCE":
+                from app.services.startup_service import handle_startup_sequence
+                async for event in handle_startup_sequence(session_id, use_tts):
+                    yield "data: " + json.dumps(event) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                return
+
+            if "TRIGGER_PROACTIVE_BRIEFING:" in clean_prompt:
+                reason = clean_prompt.split(":", 1)[1].strip()
+                from app.services.proactive_service import generate_proactive_briefing
+                async for event in generate_proactive_briefing(session_id, use_tts, reason):
+                    yield "data: " + json.dumps(event) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+                return
 
             # 0 & 1. Fetch context + classify intent concurrently (independent ops)
             context, plan = await asyncio.gather(
@@ -694,16 +817,19 @@ async def post_stream_endpoint(payload: ChatPayload):
             from app.utils.file_pruning import prune_context
             context = prune_context(context)
             
-            if use_tts:
-                filler_phrase = select_filler_phrase(plan.intent, prompt)
-                if filler_phrase:
-                    yield "data: " + json.dumps({"chunk": filler_phrase + "\n\n"}) + "\n\n"
-                    filler_audio = await synthesize_speech_to_b64(filler_phrase)
-                    if filler_audio:
-                        yield "data: " + json.dumps({"audio": filler_audio}) + "\n\n"
+            if False:
+                pass
+            else:
+                if use_tts:
+                    filler_phrase = select_filler_phrase(plan.intent, prompt)
+                    if filler_phrase:
+                        yield "data: " + json.dumps({"chunk": filler_phrase + "\n\n"}) + "\n\n"
+                        filler_audio = await synthesize_speech_to_b64(filler_phrase)
+                        if filler_audio:
+                            yield "data: " + json.dumps({"audio": filler_audio}) + "\n\n"
             
             # 2. Check if there are tasks to execute
-            if plan.intent in ["task", "research", "vision"] and plan.execution_plan:
+            if plan.intent in ["task", "research", "vision", "research_chat"] and plan.execution_plan:
                 yield "data: " + json.dumps({"activity": {"event": "task_plan", "message": "Executing task plan..."}}) + "\n\n"
                 
                 event_queue = asyncio.Queue()
@@ -818,8 +944,9 @@ async def post_stream_endpoint(payload: ChatPayload):
                 await memory_service.save_interaction(session_id, prompt, full_response)
             else:
                 yield "data: " + json.dumps({"activity": {"event": "chat", "message": "Thinking..."}}) + "\n\n"
+                envelope = get_dynamic_persona_envelope()
                 messages = [
-                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}, a highly capable AI tactical assistant.\n\n{context}"},
+                    {"role": "system", "content": f"You are {config.ASSISTANT_NAME}, a highly capable AI tactical assistant.\n\n{envelope}\n\n{context}"},
                     {"role": "user", "content": prompt}
                 ]
                 full_response_parts = []
@@ -966,6 +1093,16 @@ async def focus_tab_endpoint(payload: FocusTabPayload):
 @app.get("/app/audio/{file_name}")
 async def silent_audio_placeholder(file_name: str):
     return {"status": "silent_mode"}
+
+class ProactivePayload(BaseModel):
+    session_id: Optional[str] = "default"
+    tts: Optional[bool] = False
+
+@app.post("/chat/victor/proactive")
+async def post_proactive_endpoint(payload: ProactivePayload):
+    from app.services.proactive_service import check_proactive_trigger
+    should_activate, reason = check_proactive_trigger()
+    return {"should_activate": should_activate, "reason": reason}
 
 # Mount frontend at the root route to serve cleanly
 app.mount("/", StaticFiles(directory=config.DIRS["frontend"], html=True), name="frontend")

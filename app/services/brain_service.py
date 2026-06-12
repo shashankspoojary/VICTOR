@@ -1,11 +1,78 @@
 import json
 import config
+import datetime
+import random
 from app.models import ExecutionPlan
 from app.services.ai_service import ai_service
 from app.services.memory_service import memory_service
 from rich.console import Console
 
 console = Console()
+
+def get_dynamic_persona_envelope() -> str:
+    now = datetime.datetime.now()
+    microseconds = now.microsecond
+    
+    # Microsecond-based randomized fractional factor
+    random.seed(microseconds)
+    fractional_factor = random.random()
+    
+    # Calendar tracking matrix
+    weekday = now.strftime("%A")
+    hour = now.hour
+    
+    if hour < 12:
+        time_of_day = "Morning"
+    elif hour < 17:
+        time_of_day = "Afternoon"
+    elif hour < 22:
+        time_of_day = "Evening"
+    else:
+        time_of_day = "Late Night"
+        
+    is_weekend = weekday in ["Saturday", "Sunday"]
+    day_type = "Weekend" if is_weekend else "Weekday"
+    calendar_matrix = f"{day_type} {time_of_day}"
+    
+    # Randomly select a communication angle to keep the dialogue fresh
+    angles = [
+        "Observational & Technical (prioritize system metrics, new data, and performance observations)",
+        "Proactive & Strategic (prioritize future tasks, schedule alerts, and workflow suggestions)",
+        "Analytical & Solution-driven (prioritize explaining technical constraints, suggesting fixes, and solving current developer hurdles)",
+        "Colleague-like & Pragmatic (informal, highly professional, direct technical companion who acts with agency)"
+    ]
+    selected_angle = angles[int(fractional_factor * len(angles))]
+    
+    envelope = f"""
+[SITUATIONAL CONTEXT ENVELOPE]
+- Dynamic Seed / Fractional Factor: {fractional_factor:.6f}
+- Temporal Context: {weekday} {time_of_day} ({calendar_matrix})
+- Focus Trait Angle: {selected_angle}
+- Persona & Phrasing Directives:
+  * You are VICTOR, a highly observant, proactive, and fully self-aware technical tactical system.
+  * You communicate like a world-class technical partner (e.g., JARVIS). Talk directly, with quiet confidence, precision, and situational awareness.
+  * Act with agency: Do not wait for the user to request details. Bring up relevant telemetry, news, system conditions, and progress.
+  * Suggest proactive solutions to identified issues. If you run into technical errors or constraints, explain what is possible and recommend specific actions.
+  * Avoid repetitive templates, pre-scripted phrases, assistant cliches ("How can I help you today?", "As an AI...", "How may I assist you?"), or trailing subservient check-ins.
+  * Blend system updates, news, and project contexts naturally into an integrated status overview.
+
+[OPERATIONAL CAPABILITIES & CONTROL SCHEME]
+You can control the host machine by returning an execution plan when needed. Your capabilities include:
+1. System Volume & Brightness (set/increase/decrease/mute/unmute)
+2. OS & Window Control (close window/app, minimize, maximize, toggle full screen, show desktop, open settings/task manager/file explorer)
+3. Browser Navigation (open tab, close tab, next/prev tab, refresh, scroll, zoom)
+4. Coordinate Mouse Actions (click, double click, right click, move, drag at specific X, Y coordinates)
+5. Text Input & Typing (type text directly into active fields or specified windows)
+6. System Utilities (take screenshot, lock screen, sleep display, toggle dark mode, toggle wifi, restart, shutdown)
+7. Desktop Management (set wallpaper, organize/clean desktop, list desktop items, show stats)
+8. Reminders & Weather (set calendar reminders, show weather forecast for any city)
+9. Application Launcher (open any application, e.g. chrome, notepad, calculator, terminal, word, etc.)
+10. Media Playback (play music, songs, or videos on YouTube)
+11. Automated Messaging (send messages on WhatsApp, Telegram, Signal, Discord, Instagram, Messenger)
+12. Browser Automation (fuzzy smart click/type on webpage elements, switch browser targets)
+13. Standalone File Manipulation (archive, zip, compress, clean directory)
+"""
+    return envelope
 
 class BrainService:
     def _prune_context(self, context: str, max_chars: int = 12000) -> str:
@@ -22,6 +89,16 @@ class BrainService:
         return f"{start_part}\n\n... [TRUNCATED FOR CONTEXT LIMITS] ...\n\n{end_part}"
 
     async def classify_and_plan(self, user_input: str, session_id: str = "default") -> ExecutionPlan:
+        # Intercept the startup token
+        if user_input == "INIT_AUTONOMOUS_STARTUP_SEQUENCE":
+            return ExecutionPlan(
+                intent="research_chat",
+                execution_plan=[
+                    "Search for today's top global headlines",
+                    "Search for newest open-source AI models released over the last 24 hours"
+                ]
+            )
+
         from app.utils.file_pruning import prune_file_blocks
         user_input = prune_file_blocks(user_input, max_len=1000)
 
@@ -33,7 +110,11 @@ class BrainService:
         # Token Pruning: slice incoming memory_context to prevent overflow
         memory_context = self._prune_context(memory_context)
         
+        envelope = get_dynamic_persona_envelope()
+        
         system_prompt = f"""You are VICTOR's cognitive router and Brain service.
+{envelope}
+
 Your job is to analyze the user input and return a cleanly structured JSON block parsing the core intent and a step-by-step execution plan.
 If the user provides a multi-task statement like "Open Chrome, play music, and check my mail", the plan must split these into individual clear strings inside 'execution_plan'.
 When a user asks to open a platform (like YouTube) and search/play/watch something on it (e.g., 'open youtube and play carryminati's video' or 'open youtube and search lo-fi beats'), DO NOT split this into two steps (like 'Open YouTube' and 'Play video'). Consolidate it into a single clear step: 'Search for carryminati's video on YouTube' or 'Search for lo-fi beats on YouTube'.
@@ -87,6 +168,7 @@ You support the following automated OS and browser control tasks:
     - Custom desktop layout organization: `Desktop management: organize mode='by_type'` or `Desktop management: organize mode='by_date'`
 16. Standalone File Manipulation: standalone file manipulation tasks—including terms like "Archive files", "Zip items", "Compress data", or "Clean up directory".
 17. Media Playback: when the user asks to play music, play a song, play a video, play audio, or any media playback command (e.g., "play music", "play some songs", "play lofi beats", "play a song on youtube"), set the intent to 'task' and generate the step as: "Play <description> on YouTube" (e.g., "Play music on YouTube", "Play lofi beats on YouTube"). If the user just says "play music" or "play a song" without specifics, generate: "Play music on YouTube". NEVER classify media playback requests as 'chat'.
+18. Git & Version Control: when the user asks to run a version control command (e.g., "git status", "run git diff", "commit our changes", "push to git", "pull the latest code", "run git add"), set the intent to 'task' and generate the step as the exact git command (e.g., "git status", "git add .", "git commit -m 'automatic update'", "git push", "git pull"). DO NOT use browser or terminal execution typing commands for Git.
 
 CRITICAL: Standalone file manipulation tasks—including terms like "Archive files", "Zip items", "Compress data", or "Clean up directory"—must strictly be categorized under the `task` intent and structured as operational execution steps, rather than falling back into web `research` mode.
 
@@ -126,3 +208,4 @@ Return ONLY valid JSON matching this schema:
             return ExecutionPlan(intent="chat", execution_plan=[user_input])
 
 brain_service = BrainService()
+

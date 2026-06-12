@@ -2377,7 +2377,7 @@ function initProactiveCheck() {
             return;
         }
         const now = Date.now();
-        if (now - lastProactiveTime < 180000) {
+        if (now - lastProactiveTime < 60000) {
             return;
         }
         try {
@@ -2399,7 +2399,7 @@ function initProactiveCheck() {
         } catch (e) {
             console.error("Proactive check failed:", e);
         }
-    }, 60000);
+    }, 30000);
 }
 
 document.addEventListener('DOMContentLoaded', init);

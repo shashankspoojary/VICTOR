@@ -25,12 +25,12 @@ LAST_TRIGGERED = {
 }
 
 COOLDOWNS = {
-    "high_cpu": 600,       # 10 minutes
-    "high_ram": 600,       # 10 minutes
-    "low_disk": 1800,      # 30 minutes
-    "git_changes": 900,      # 15 minutes
-    "late_night": 7200,     # 2 hours
-    "general_checkin": 1200, # 20 minutes
+    "high_cpu": 60,        # 1 minute
+    "high_ram": 60,        # 1 minute
+    "low_disk": 300,       # 5 minutes
+    "git_changes": 120,     # 2 minutes
+    "late_night": 300,      # 5 minutes
+    "general_checkin": 180, # 3 minutes
 }
 
 def check_proactive_trigger() -> tuple[bool, str]:
@@ -98,9 +98,9 @@ def check_proactive_trigger() -> tuple[bool, str]:
             LAST_TRIGGERED["late_night"] = now
             return True, "late_night"
 
-    # 4. General / Random Check-in Trigger (5% probability roll)
+    # 4. General / Random Check-in Trigger (35% probability roll)
     if now - LAST_TRIGGERED["general_checkin"] > COOLDOWNS["general_checkin"]:
-        if random.random() < 0.05:
+        if random.random() < 0.35:
             LAST_TRIGGERED["general_checkin"] = now
             return True, "general_checkin"
 

@@ -34,6 +34,18 @@ COOLDOWNS = {
 }
 
 def check_proactive_trigger() -> tuple[bool, str]:
+    # Check if proactive briefings are muted in memory
+    memory_data = {}
+    memory_file = memory_service.memory_file
+    if memory_file.exists():
+        try:
+            with open(memory_file, "r", encoding="utf-8") as f:
+                memory_data = json.load(f)
+        except Exception:
+            pass
+    if memory_data.get("proactive_muted") == "true":
+        return False, ""
+
     now = time.time()
     
     # 1. Telemetry checks (CPU, RAM, Disk)

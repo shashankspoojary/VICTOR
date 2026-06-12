@@ -89,6 +89,19 @@ class BrainService:
         return f"{start_part}\n\n... [TRUNCATED FOR CONTEXT LIMITS] ...\n\n{end_part}"
 
     async def classify_and_plan(self, user_input: str, session_id: str = "default") -> ExecutionPlan:
+        # Intercept mute/unmute/resume tokens for proactive briefings
+        s = user_input.strip().lower().strip(".,!?")
+        if s in ["mute", "mute suggestions", "stop suggestions", "silence suggestions"]:
+            return ExecutionPlan(
+                intent="task",
+                execution_plan=["Memorize key 'proactive_muted' with value 'true'"]
+            )
+        elif s in ["unmute", "resume", "unmute suggestions", "resume suggestions"]:
+            return ExecutionPlan(
+                intent="task",
+                execution_plan=["Forget key 'proactive_muted'"]
+            )
+
         # Intercept the startup token
         if user_input == "INIT_AUTONOMOUS_STARTUP_SEQUENCE":
             return ExecutionPlan(

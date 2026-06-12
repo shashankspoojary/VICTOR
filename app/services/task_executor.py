@@ -888,13 +888,21 @@ class TaskExecutor:
             await memory_service.update_memory(param_key, param_value)
             console.print(f"[bold green]Memory Updated:[/bold green] {param_key} -> {param_value}")
             if event_queue:
-                await event_queue.put({"type": "token", "text": "Understood, Sir. I have updated my records."})
+                if param_key == "proactive_muted" and param_value == "true":
+                    msg = "Understood, Sir. I will remain silent and withhold all proactive suggestions until you tell me to unmute or resume."
+                else:
+                    msg = "Understood, Sir. I have updated my records."
+                await event_queue.put({"type": "token", "text": msg})
         elif action == "forget":
             param_key = primitive.get("key")
             await memory_service.remove_memory(param_key)
             console.print(f"[bold red]Memory Removed:[/bold red] {param_key}")
             if event_queue:
-                await event_queue.put({"type": "token", "text": "Done, Sir. I have removed that from my memory."})
+                if param_key == "proactive_muted":
+                    msg = "Suggestions protocol reactivated, Sir. I will resume periodic briefings and telemetry checks."
+                else:
+                    msg = "Done, Sir. I have removed that from my memory."
+                await event_queue.put({"type": "token", "text": msg})
         elif action == "save_face":
             name = primitive.get("name", "Unknown")
             rel = primitive.get("relationship", "Unknown")

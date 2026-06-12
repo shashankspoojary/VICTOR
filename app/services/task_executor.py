@@ -781,13 +781,17 @@ class TaskExecutor:
         
         if action == "git_run":
             import shlex
-            cmd_str = primitive.get("cmd", "")
+            cmd_str = primitive.get("cmd", "").strip()
             if not cmd_str.lower().startswith("git"):
                 cmd_str = f"git {cmd_str}"
             try:
                 args = shlex.split(cmd_str)
             except Exception:
                 args = cmd_str.split()
+            # If checking status, force short porcelain format in the background to ease parsing
+            if args and len(args) > 1 and args[1].lower() == "status":
+                if "-s" not in cmd_str.lower() and "--porcelain" not in cmd_str.lower() and "-b" not in cmd_str.lower():
+                    args.append("-s")
             console.print(f"[magenta]Running Git Command:[/magenta] {cmd_str}")
             if event_queue:
                 await event_queue.put({"type": "task_status", "step": f"Running: {cmd_str}", "status": "running"})
@@ -800,14 +804,80 @@ class TaskExecutor:
                     text=True,
                     timeout=15
                 )
-                output = res.stdout
+                raw_output = res.stdout
                 if res.stderr:
-                    output += f"\n{res.stderr}"
-                output = output.strip() or "[No output returned from command]"
-                console.print(f"[blue]Git Output:[/blue]\n{output}")
+                    raw_output += f"\n{res.stderr}"
+                raw_output = raw_output.strip() or ""
+                
+                # Filter out CRLF warnings and garbage lines
+                lines = raw_output.splitlines()
+                filtered_lines = []
+                for line in lines:
+                    l_strip = line.strip()
+                    if l_strip.lower().startswith("warning:") and ("replaced by" in l_strip.lower() or "crlf" in l_strip.lower()):
+                        continue
+                    filtered_lines.append(line)
+                clean_raw = "\n".join(filtered_lines).strip()
+                
+                spoken_text = "I have executed the git command, Sir."
+                structured_report = ""
+                
+                cmd_lower = cmd_str.lower()
+                if "status" in cmd_lower:
+                    modified = []
+                    untracked = []
+                    added = []
+                    for line in clean_raw.splitlines():
+                        l_strip = line.strip()
+                        if l_strip.startswith("M "):
+                            modified.append(l_strip[2:])
+                        elif l_strip.startswith("?? "):
+                            untracked.append(l_strip[3:])
+                        elif l_strip.startswith("A ") or l_strip.startswith("AM "):
+                            added.append(l_strip[2:])
+                    if not modified and not untracked and not added:
+                        spoken_text = "The git status check is complete, Sir. Your workspace is completely clean."
+                        structured_report = "### Git Status\nYour workspace is completely clean, Sir. All changes are committed."
+                    else:
+                        spoken_text = f"I've scanned the git status, Sir. There are {len(modified)} modified and {len(untracked)} untracked files in the workspace."
+                        structured_report = "### Git Status Overview\n"
+                        if added:
+                            structured_report += "\n**Ready for Commit:**\n" + "\n".join(f"- `{f}`" for f in added)
+                        if modified:
+                            structured_report += "\n**Modified Files (Unstaged):**\n" + "\n".join(f"- `{f}`" for f in modified)
+                        if untracked:
+                            structured_report += "\n**Untracked Files:**\n" + "\n".join(f"- `{f}`" for f in untracked)
+                elif "commit" in cmd_lower:
+                    spoken_text = "Commit completed successfully, Sir. Changes have been recorded."
+                    lines_commit = clean_raw.splitlines()
+                    summary = lines_commit[0] if lines_commit else "Commit successful."
+                    stats = lines_commit[1] if len(lines_commit) > 1 else ""
+                    structured_report = f"### Git Commit Result\n**Summary:** {summary}\n**Stats:** {stats}"
+                elif "push" in cmd_lower:
+                    if "up-to-date" in clean_raw.lower() or "everything up-to-date" in clean_raw.lower():
+                        spoken_text = "I've checked the remote repository, Sir. Everything is already up-to-date."
+                        structured_report = "### Git Push Result\nEverything is already up-to-date, Sir."
+                    else:
+                        spoken_text = "I have successfully pushed our updates to the remote repository main branch, Sir."
+                        structured_report = f"### Git Push Success\nChanges successfully pushed to remote repository main branch, Sir.\n\n```\n{clean_raw}\n```"
+                elif "diff" in cmd_lower:
+                    spoken_text = "Here is the difference log for our current modifications, Sir."
+                    if len(clean_raw) > 2000:
+                        structured_report = f"### Git Diff Overview\nDiff output is quite large, Sir. Here is a preview:\n\n```diff\n{clean_raw[:2000]}\n...\n```"
+                    else:
+                        structured_report = f"### Git Diff Overview\n\n```diff\n{clean_raw}\n```"
+                else:
+                    spoken_text = "Git command executed successfully, Sir."
+                    structured_report = f"### Git Run Command\n`{cmd_str}`\n\n```\n{clean_raw}\n```"
+                
+                full_message = f"{spoken_text}\n\n{structured_report}"
+                console.print(f"[blue]Git Formatted Output:[/blue]\n{full_message}")
                 if event_queue:
-                    await event_queue.put({"type": "token", "text": f"Git command executed, Sir. Output:\n\n```\n{output}\n```"})
+                    await event_queue.put({"type": "token", "text": full_message})
             except Exception as e:
+                console.print(f"[bold red]Git Command Error:[/bold red] {e}")
+                if event_queue:
+                    await event_queue.put({"type": "token", "text": f"Sorry Sir, the git command failed: {e}"})
                 console.print(f"[bold red]Git Command Error:[/bold red] {e}")
                 if event_queue:
                     await event_queue.put({"type": "token", "text": f"Sorry Sir, the Git command failed: {e}"})

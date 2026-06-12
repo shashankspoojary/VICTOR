@@ -170,9 +170,16 @@ async def scan_monitored_assets(session_id: str) -> tuple[str, list]:
     return "\n".join(results_summary), search_results_list
 
 async def local_synthesize_speech_to_b64(text: str) -> Optional[str]:
+    # 0. Scrub markdown code blocks so they are not spoken
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
     if "<think>" in text:
         text = text.split("<think>")[0]
+        
+    # 1b. Normalize Git pronunciation (force lowercase to avoid acronym reading)
+    text = re.sub(r'\bGit\b', 'git', text)
+    text = re.sub(r'\bGIT\b', 'git', text)
     lines = text.split('\n')
     cleaned_lines = []
     for line in lines:

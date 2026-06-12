@@ -147,10 +147,17 @@ class ChatPayload(BaseModel):
     auto_open_tabs: Optional[bool] = False
 
 async def synthesize_speech_to_b64(text: str) -> Optional[str]:
+    # 0. Scrub markdown code blocks so they are not spoken
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+
     # 1. Scrub thinking blocks
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
     if "<think>" in text:
         text = text.split("<think>")[0]
+        
+    # 1b. Normalize Git pronunciation (force lowercase to avoid acronym reading)
+    text = re.sub(r'\bGit\b', 'git', text)
+    text = re.sub(r'\bGIT\b', 'git', text)
         
     # 2. Scrub markdown tables, pipes, separators, and dashes
     lines = text.split('\n')

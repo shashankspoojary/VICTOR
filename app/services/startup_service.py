@@ -207,9 +207,49 @@ async def local_synthesize_speech_to_b64(text: str) -> Optional[str]:
     return None
 
 async def handle_startup_sequence(session_id: str, use_tts: bool) -> AsyncGenerator[dict, None]:
+    # Check if we have already run the daily report today
+    today_str = datetime.date.today().isoformat()
+    last_report_date = None
+    memory_file = memory_service.memory_file
+    if memory_file.exists():
+        try:
+            with open(memory_file, "r", encoding="utf-8") as f:
+                memory_data = json.load(f)
+                last_report_date = memory_data.get("last_daily_report_date")
+        except Exception:
+            pass
+
+    # Determine the time-of-day greeting
+    now = datetime.datetime.now()
+    hour = now.hour
+    if hour < 12:
+        time_greeting = "Good morning"
+    elif hour < 17:
+        time_greeting = "Good afternoon"
+    elif hour < 22:
+        time_greeting = "Good evening"
+    else:
+        time_greeting = "Late night protocol active"
+
+    if last_report_date == today_str:
+        # Welcome back / standard boot sequence greeting without compiling the report
+        welcome_back_choices = [
+            f"{time_greeting if hour < 22 else 'Welcome back'}, Sir. All systems are operational. Today's intelligence briefing has already been delivered.",
+            "All systems are online, Sir. Let me know what you need.",
+            "Systems active, Sir. Ready for your instructions.",
+            f"{time_greeting if hour < 22 else 'Welcome back'}, Sir. Global grids are stable. How can I assist you today?"
+        ]
+        greeting = random.choice(welcome_back_choices)
+        yield {"chunk": greeting + "\n\n"}
+        if use_tts:
+            g_audio = await local_synthesize_speech_to_b64(greeting)
+            if g_audio:
+                yield {"audio": g_audio}
+        return
+
     # 1. Immediate greeting response
     greeting_choices = [
-        "Good morning, Sir. All primary systems are online. Initializing global scans and pulling today's telemetry now.",
+        f"{time_greeting}, Sir. All primary systems are online. Initializing global scans and pulling today's telemetry now.",
         "Boot sequence complete, Sir. Syncing data logs and compiling today's intelligence report.",
         "Online and ready, Sir. Checking global grids and scanning the network for today's developments.",
         "Systems initialized, Sir. Connecting to news archives and gathering today's global updates."
@@ -329,6 +369,12 @@ Return ONLY a JSON object with exactly two keys:
     
     # Save the interaction to memory
     await memory_service.save_interaction(session_id, "INIT_AUTONOMOUS_STARTUP_SEQUENCE", chat_text)
+    
+    # Update last daily report date in memory
+    try:
+        await memory_service.update_memory("last_daily_report_date", today_str)
+    except Exception as e:
+        print(f"Error updating last daily report date in memory: {e}")
     
     # Yield TTS audio for the briefing text
     if use_tts and chat_text:

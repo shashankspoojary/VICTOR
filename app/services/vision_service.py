@@ -26,40 +26,39 @@ class VisionService:
             elif face_info["status"] == "unknown":
                 face_context = "\n[Face Recognition System] UNKNOWN HUMAN DETECTED. In your response, after answering the query, YOU MUST ask: 'I see someone in the image. Would you like me to save their identity?'"
         
-        client = AsyncGroq(api_key=api_key)
-        
-        base64_image = base64.b64encode(image_bytes).decode('utf-8')
-        image_url = f"data:image/jpeg;base64,{base64_image}"
-        
-        system_content = "You are a vision-capable AI assistant. You are looking at a webcam snapshot or an uploaded image from the user. Analyze the image and answer the user's query directly by describing what you see. Do not claim you are unable to see images or perceive the physical world, since the image is provided directly to you."
-        if face_context:
-            system_content += f"\n{face_context}"
+        async with AsyncGroq(api_key=api_key) as client:
+            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+            image_url = f"data:image/jpeg;base64,{base64_image}"
             
-        messages = [
-            {
-                "role": "system",
-                "content": system_content
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_url,
+            system_content = "You are a vision-capable AI assistant. You are looking at a webcam snapshot or an uploaded image from the user. Analyze the image and answer the user's query directly by describing what you see. Do not claim you are unable to see images or perceive the physical world, since the image is provided directly to you."
+            if face_context:
+                system_content += f"\n{face_context}"
+                
+            messages = [
+                {
+                    "role": "system",
+                    "content": system_content
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_url,
+                            },
                         },
-                    },
-                ],
-            }
-        ]
-        
-        response = await client.chat.completions.create(
-            model=config.GROQ_VLM_MODEL,
-            messages=messages,
-            temperature=0.1
-        )
-        
-        return response.choices[0].message.content
+                    ],
+                }
+            ]
+            
+            response = await client.chat.completions.create(
+                model=config.GROQ_VLM_MODEL,
+                messages=messages,
+                temperature=0.1
+            )
+            
+            return response.choices[0].message.content
 
 vision_service = VisionService()

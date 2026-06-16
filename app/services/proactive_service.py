@@ -16,24 +16,30 @@ from app.services.startup_service import gather_system_telemetry, local_synthesi
 
 # Track last activation times to enforce cooldowns
 LAST_TRIGGERED = {
-    "high_cpu": 0,
-    "high_ram": 0,
-    "low_disk": 0,
-    "git_changes": 0,
-    "late_night": 0,
-    "general_checkin": 0,
+    "high_cpu": 0.0,
+    "high_ram": 0.0,
+    "low_disk": 0.0,
+    "git_changes": 0.0,
+    "late_night": 0.0,
+    "general_checkin": 0.0,
 }
 
 COOLDOWNS = {
-    "high_cpu": 60,        # 1 minute
-    "high_ram": 60,        # 1 minute
-    "low_disk": 300,       # 5 minutes
-    "git_changes": 120,     # 2 minutes
-    "late_night": 300,      # 5 minutes
-    "general_checkin": 180, # 3 minutes
+    "high_cpu": 1800,         # 30 minutes
+    "high_ram": 1800,         # 30 minutes
+    "low_disk": 3600,         # 1 hour
+    "git_changes": 1800,      # 30 minutes
+    "late_night": 14400,      # 4 hours
+    "general_checkin": 10800, # 3 hours
 }
 
-def check_proactive_trigger() -> tuple[bool, str]:
+async def _update_trigger_timestamp(trigger_name: str, timestamp: float, memory_data: dict):
+    LAST_TRIGGERED[trigger_name] = timestamp
+    last_triggered_data = memory_data.get("proactive_last_triggered", {})
+    last_triggered_data[trigger_name] = timestamp
+    await memory_service.update_memory("proactive_last_triggered", last_triggered_data)
+
+async def check_proactive_trigger() -> tuple[bool, str]:
     # Check if proactive briefings are muted in memory
     memory_data = {}
     memory_file = memory_service.memory_file
@@ -48,6 +54,13 @@ def check_proactive_trigger() -> tuple[bool, str]:
 
     now = time.time()
     
+    # Load persistent trigger timestamps
+    last_triggered_data = memory_data.get("proactive_last_triggered", {})
+    for k, v in last_triggered_data.items():
+        if k in LAST_TRIGGERED:
+            if isinstance(v, (int, float)):
+                LAST_TRIGGERED[k] = float(v)
+
     # 1. Telemetry checks (CPU, RAM, Disk)
     try:
         telemetry = gather_system_telemetry()
@@ -58,7 +71,7 @@ def check_proactive_trigger() -> tuple[bool, str]:
             try:
                 cpu_val = int(cpu_str[:-1])
                 if cpu_val >= 80 and (now - LAST_TRIGGERED["high_cpu"] > COOLDOWNS["high_cpu"]):
-                    LAST_TRIGGERED["high_cpu"] = now
+                    await _update_trigger_timestamp("high_cpu", now, memory_data)
                     return True, "high_cpu"
             except ValueError:
                 pass
@@ -69,7 +82,7 @@ def check_proactive_trigger() -> tuple[bool, str]:
             try:
                 ram_val = float(ram_str.split("%")[0])
                 if ram_val >= 85.0 and (now - LAST_TRIGGERED["high_ram"] > COOLDOWNS["high_ram"]):
-                    LAST_TRIGGERED["high_ram"] = now
+                    await _update_trigger_timestamp("high_ram", now, memory_data)
                     return True, "high_ram"
             except ValueError:
                 pass
@@ -80,7 +93,7 @@ def check_proactive_trigger() -> tuple[bool, str]:
             try:
                 free_gb = int(disk_c.split()[0])
                 if free_gb < 15 and (now - LAST_TRIGGERED["low_disk"] > COOLDOWNS["low_disk"]):
-                    LAST_TRIGGERED["low_disk"] = now
+                    await _update_trigger_timestamp("low_disk", now, memory_data)
                     return True, "low_disk"
             except (ValueError, IndexError):
                 pass
@@ -96,10 +109,23 @@ def check_proactive_trigger() -> tuple[bool, str]:
             text=True,
             timeout=2
         )
-        if res.returncode == 0 and res.stdout.strip():
-            if now - LAST_TRIGGERED["git_changes"] > COOLDOWNS["git_changes"]:
-                LAST_TRIGGERED["git_changes"] = now
-                return True, "git_changes"
+        if res.returncode == 0:
+            git_status_output = res.stdout.strip()
+            if git_status_output:
+                last_git_status = memory_data.get("proactive_last_git_status", "")
+                
+                # If changes are different from what we last alerted on
+                if git_status_output != last_git_status:
+                    # Minimum 30 min cooldown
+                    if now - LAST_TRIGGERED["git_changes"] > COOLDOWNS["git_changes"]:
+                        await memory_service.update_memory("proactive_last_git_status", git_status_output)
+                        await _update_trigger_timestamp("git_changes", now, memory_data)
+                        return True, "git_changes"
+                else:
+                    # Same changes, wait at least 4 hours (14400 seconds) before repeating warning
+                    if now - LAST_TRIGGERED["git_changes"] > 14400:
+                        await _update_trigger_timestamp("git_changes", now, memory_data)
+                        return True, "git_changes"
     except Exception as e:
         print("Proactive Git check error:", e)
 
@@ -107,13 +133,13 @@ def check_proactive_trigger() -> tuple[bool, str]:
     curr_hour = datetime.datetime.now().hour
     if curr_hour >= 23 or curr_hour <= 3:
         if now - LAST_TRIGGERED["late_night"] > COOLDOWNS["late_night"]:
-            LAST_TRIGGERED["late_night"] = now
+            await _update_trigger_timestamp("late_night", now, memory_data)
             return True, "late_night"
 
     # 4. General / Random Check-in Trigger (35% probability roll)
     if now - LAST_TRIGGERED["general_checkin"] > COOLDOWNS["general_checkin"]:
         if random.random() < 0.35:
-            LAST_TRIGGERED["general_checkin"] = now
+            await _update_trigger_timestamp("general_checkin", now, memory_data)
             return True, "general_checkin"
 
     return False, ""
@@ -139,12 +165,33 @@ async def generate_proactive_briefing(session_id: str, use_tts: bool, reason: st
         
     from app.services.brain_service import get_dynamic_persona_envelope
     envelope = get_dynamic_persona_envelope()
-    context = await memory_service.get_context(session_id)
+    # For proactive briefings, load a lightweight context to prevent exceeding daily token limits (TPD)
+    now = datetime.datetime.now()
+    context = f"--- SYSTEM MEMORY & CONTEXT ---\n- User Owner Name: {config.VICTOR_OWNER_NAME}\n- Assistant Name: {config.ASSISTANT_NAME}\n- Current Time: {now.strftime('%I:%M %p')}\n- Current Date: {now.strftime('%A, %B %d, %Y')}"
     
+    # Load recent conversation history for this session (up to 3 interactions)
+    recent_history = []
+    try:
+        chat_file = memory_service.chats_dir / f"{session_id}.json"
+        if chat_file.exists():
+            with open(chat_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    recent_history = data[-3:]
+    except Exception:
+        pass
+
+    history_context = ""
+    if recent_history:
+        history_context = "\n[RECENT CONVERSATION HISTORY (LAST 3 TURNS)]\n"
+        for h in recent_history:
+            history_context += f"User: {h.get('user', '')}\nAssistant: {h.get('assistant', '')}\n"
+
     system_prompt = f"""You are {config.ASSISTANT_NAME}, a highly capable, self-aware AI tactical assistant (inspired by JARVIS).
 {envelope}
 
 {context}
+{history_context}
 
 You have proactively activated yourself without the user asking a question because of the following trigger event: '{reason}'.
 Here is additional real-time diagnostics:
@@ -162,6 +209,7 @@ MANDATORY DIRECTIVES:
    - For 'general_checkin': offer a helpful tech tip, congratulate them on their coding session, or suggest checking model headlines.
 3. **No Markdown in Chat**: The chat field must contain a single fluid paragraph with NO asterisks, bold tags, or bullet points. It must be clean text designed for voice output.
 4. **Offer Action Options**: Briefly suggest 1 or 2 actions you can run for them (like cleaning the workspace, organizing files, setting wallpaper, or showing details).
+5. **Vary Questions & Suggestions**: Do NOT repeat the same questions, recommendations, or check-in phrases you used in the recent conversation history. Keep your recommendations, tips, and questions completely fresh, different, and varied every single time unless it is absolutely critical to repeat them.
 
 Return ONLY a valid JSON object with exactly two keys:
 1. "chat": A single, highly natural paragraph to be spoken aloud. Must NOT contain markdown or bullet points.
@@ -178,7 +226,7 @@ CRITICAL: Ensure both values are valid, properly quoted, and escaped JSON string
     try:
         result = await ai_service.get_chat_completion(
             messages,
-            model=config.GROQ_MODEL,
+            model="llama-3.1-8b-instant",
             response_format={"type": "json_object"},
             temperature=0.2
         )

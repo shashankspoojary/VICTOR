@@ -1108,7 +1108,7 @@ class ProactivePayload(BaseModel):
 @app.post("/chat/victor/proactive")
 async def post_proactive_endpoint(payload: ProactivePayload):
     from app.services.proactive_service import check_proactive_trigger
-    should_activate, reason = check_proactive_trigger()
+    should_activate, reason = await check_proactive_trigger()
     return {"should_activate": should_activate, "reason": reason}
 
 # Mount frontend at the root route to serve cleanly

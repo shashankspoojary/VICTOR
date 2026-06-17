@@ -277,11 +277,11 @@ async def handle_startup_sequence(session_id: str, use_tts: bool) -> AsyncGenera
     # 4. AI Releases Step
     yield {"activity": {"event": "ai_developments", "message": "Checking latest AI model releases..."}}
     # Query for open-code models, OpenCode Zen, OpenRouter free models, Blackbox AI, and Kilo Code AI
-    ai_opencode_zen_task = realtime_service.search("new OpenCode AI models and free availability of Zen AI")
-    ai_openrouter_task = realtime_service.search("OpenRouter new AI models and free availability")
-    ai_blackbox_task = realtime_service.search("Blackbox AI coding assistant updates and free availability")
-    ai_kilocode_task = realtime_service.search("Kilo Code AI extension releases and free availability")
-    ai_general_task = realtime_service.search("latest open source AI models released today")
+    ai_opencode_zen_task = realtime_service.search("list of free AI models available on OpenCode Zen and OpenCode")
+    ai_openrouter_task = realtime_service.search("list of free AI models available on OpenRouter")
+    ai_blackbox_task = realtime_service.search("list of free models and coding assistant models on Blackbox AI")
+    ai_kilocode_task = realtime_service.search("list of free and local AI models supported by Kilo Code AI")
+    ai_general_task = realtime_service.search("new open-source AI models released today and their names")
     
     # 5. Assets Step
     yield {"activity": {"event": "asset_status", "message": "Scanning registered personal assets..."}}
@@ -355,7 +355,12 @@ Generate a briefing that is dynamic, engaging, and premium.
 MANDATORY DIRECTIVES:
 1. **Dynamic Tone**: Do not use standard templates or repetitive scripts. Let your tone be natural, direct, and conversational. Refer to the Focus Trait Angle in the envelope to guide your style.
 2. **Proactive Diagnostics**: Mention system stats. If CPU is high, RAM is tight, or disk space is low, warn the user and suggest an action or a solution (e.g. "C Drive is running a bit heavy, Sir. I can clean up some temp caches if you'd like").
-3. **AI Models & Free Access**: Detail recently released open-source and open-code models and their free availability. Explicitly identify and discuss the free availability and new models/updates on Zen (OpenCode Zen), OpenRouter (including their free models), Blackbox AI (the free coding assistant), and Kilo Code AI (the open-source extension, free credits, and local model support). Detail exactly how the user can access them for free.
+3. **AI Models & Free Access**: Detail recently released open-source and open-code models and their free availability. You MUST explicitly identify and list the names of the free AI models available on:
+   - OpenCode Zen / OpenCode (e.g., Big Pickle, MiMo V2 Pro Free, MiniMax M2.5 Free, Nemotron 3 Super)
+   - OpenRouter (list specific free model names like NVIDIA Nemotron-3, Llama 3.1 8B Instruct free, Gemma 2 9B free, Mistral 7B free, etc.)
+   - Blackbox AI (list the free coding assistant models, such as Blackbox-classic, etc.)
+   - Kilo Code AI (list local models supported such as Llama 3, Codellama, Qwen 2.5 Coder, and how to get free credits)
+Detail exactly how the user can access these models for free on each platform.
 4. **Personal Life & Assets**: Address the monitored assets. If there are none, note this fact proactively and explain how the user can register a website or YouTube channel for future briefings (e.g., "No custom sites are registered in my grid yet, Sir. Let me know when you launch one so I can initialize status telemetry"). If there are registered assets, summarize their status.
 5. **Agency**: Suggest solutions to current user issues, mention what you can do (e.g., snap windows, set reminders, clean desktop, search files), and offer to perform a specific action right now.
 

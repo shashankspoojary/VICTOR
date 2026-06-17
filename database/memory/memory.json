@@ -4,6 +4,10 @@
   "user_compiled_list": "your compiled list",
   "creator_name": "Shashank",
   "user_os": "Windows 11",
-  "mother_name": "Shebis",
-  "last_daily_report_date": "2026-06-16"
+  "mother_name": "Sumathi",
+  "proactive_last_triggered": {
+    "late_night": 1781721401.5076518,
+    "general_checkin": 1781722578.0345392
+  },
+  "last_daily_report_date": "2026-06-18"
 }

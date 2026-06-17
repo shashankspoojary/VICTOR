@@ -19,6 +19,56 @@ from app.services.ai_service import ai_service
 from app.services.memory_service import memory_service
 from app.services.realtime_service import realtime_service
 
+def _extract_chat_and_sidebar_fallback(text: str) -> tuple[str, str]:
+    chat_text = ""
+    sidebar_markdown = ""
+    
+    # Try parsing as standard JSON first
+    try:
+        data = json.loads(text)
+        chat_text = data.get("chat", "").strip()
+        sidebar_markdown = data.get("sidebar", "").strip()
+        if chat_text or sidebar_markdown:
+            return chat_text, sidebar_markdown
+    except Exception:
+        pass
+
+    # If standard JSON parsing fails, try regex extraction
+    chat_match = re.search(r'"chat"\s*:\s*"(.*?)"\s*,\s*"sidebar"', text, re.DOTALL)
+    if chat_match:
+        chat_text = chat_match.group(1)
+        try:
+            chat_text = chat_text.encode().decode('unicode-escape', errors='ignore')
+        except Exception:
+            pass
+    else:
+        chat_match = re.search(r'"chat"\s*:\s*"(.*?)"', text, re.DOTALL)
+        if chat_match:
+            try:
+                chat_text = chat_match.group(1).encode().decode('unicode-escape', errors='ignore')
+            except Exception:
+                chat_text = chat_match.group(1)
+
+    sidebar_match = re.search(r'"sidebar"\s*:\s*(.*)', text, re.DOTALL)
+    if sidebar_match:
+        sidebar_content = sidebar_match.group(1).strip()
+        if sidebar_content.endswith("}"):
+            sidebar_content = sidebar_content[:-1].strip()
+            
+        if sidebar_content.startswith('"') and sidebar_content.endswith('"'):
+            try:
+                sidebar_markdown = json.loads(sidebar_content)
+            except Exception:
+                sidebar_markdown = sidebar_content[1:-1].strip()
+        else:
+            sidebar_markdown = sidebar_content
+            
+    # Clean up escaping in case they are still present
+    chat_text = chat_text.replace('\\"', '"').replace('\\n', '\n').strip()
+    sidebar_markdown = sidebar_markdown.replace('\\"', '"').replace('\\n', '\n').strip()
+    
+    return chat_text, sidebar_markdown
+
 def gather_system_telemetry() -> dict:
     telemetry = {
         "os": f"{platform.system()} {platform.release()}",
@@ -226,18 +276,48 @@ async def handle_startup_sequence(session_id: str, use_tts: bool) -> AsyncGenera
     
     # 4. AI Releases Step
     yield {"activity": {"event": "ai_developments", "message": "Checking latest AI model releases..."}}
-    ai_news_task = realtime_service.search("latest AI news models released today find free")
+    # Query for open-code models, OpenCode Zen, OpenRouter free models, Blackbox AI, and Kilo Code AI
+    ai_opencode_zen_task = realtime_service.search("new OpenCode AI models and free availability of Zen AI")
+    ai_openrouter_task = realtime_service.search("OpenRouter new AI models and free availability")
+    ai_blackbox_task = realtime_service.search("Blackbox AI coding assistant updates and free availability")
+    ai_kilocode_task = realtime_service.search("Kilo Code AI extension releases and free availability")
+    ai_general_task = realtime_service.search("latest open source AI models released today")
     
     # 5. Assets Step
     yield {"activity": {"event": "asset_status", "message": "Scanning registered personal assets..."}}
     assets_task = scan_monitored_assets(session_id)
 
     # Gather data concurrently
-    world_res, ai_res, (assets_summary, assets_links) = await asyncio.gather(
+    world_res, res_zen, res_openrouter, res_blackbox, res_kilocode, res_general, (assets_summary, assets_links) = await asyncio.gather(
         world_news_task,
-        ai_news_task,
+        ai_opencode_zen_task,
+        ai_openrouter_task,
+        ai_blackbox_task,
+        ai_kilocode_task,
+        ai_general_task,
         assets_task
     )
+
+    # Combine AI search summaries and results
+    ai_summary_parts = []
+    ai_results_list = []
+    
+    for label, res in [
+        ("OpenCode & Zen", res_zen),
+        ("OpenRouter", res_openrouter),
+        ("Blackbox AI", res_blackbox),
+        ("Kilo Code AI", res_kilocode),
+        ("General Open Source", res_general),
+    ]:
+        summary_text = res.get('summary', '').strip()
+        if summary_text and summary_text != "No results found.":
+            ai_summary_parts.append(f"[{label} Data]\n{summary_text}")
+        ai_results_list.extend(res.get('results', []))
+        
+    ai_res = {
+        "summary": "\n\n".join(ai_summary_parts) if ai_summary_parts else "No results",
+        "results": ai_results_list
+    }
 
     # 6. Synthesis Step
     yield {"activity": {"event": "synthesis", "message": "Compiling intelligence briefing..."}}
@@ -275,13 +355,16 @@ Generate a briefing that is dynamic, engaging, and premium.
 MANDATORY DIRECTIVES:
 1. **Dynamic Tone**: Do not use standard templates or repetitive scripts. Let your tone be natural, direct, and conversational. Refer to the Focus Trait Angle in the envelope to guide your style.
 2. **Proactive Diagnostics**: Mention system stats. If CPU is high, RAM is tight, or disk space is low, warn the user and suggest an action or a solution (e.g. "C Drive is running a bit heavy, Sir. I can clean up some temp caches if you'd like").
-3. **AI Models & Free Access**: Detail what new models released recently and explicitly mention how the user can access them for free (e.g., "Meta's Llama 3.3 is available for free via Hugging Face and Groq's API", "Google's Gemini 1.5 Pro can be tried for free in Google AI Studio").
+3. **AI Models & Free Access**: Detail recently released open-source and open-code models and their free availability. Explicitly identify and discuss the free availability and new models/updates on Zen (OpenCode Zen), OpenRouter (including their free models), Blackbox AI (the free coding assistant), and Kilo Code AI (the open-source extension, free credits, and local model support). Detail exactly how the user can access them for free.
 4. **Personal Life & Assets**: Address the monitored assets. If there are none, note this fact proactively and explain how the user can register a website or YouTube channel for future briefings (e.g., "No custom sites are registered in my grid yet, Sir. Let me know when you launch one so I can initialize status telemetry"). If there are registered assets, summarize their status.
 5. **Agency**: Suggest solutions to current user issues, mention what you can do (e.g., snap windows, set reminders, clean desktop, search files), and offer to perform a specific action right now.
 
-Return ONLY a JSON object with exactly two keys:
-1. "chat": A clean, highly conversational text block that will be read aloud. Must NOT contain any markdown, bullet points, asterisks, or bold tags. Keep it fluid, natural, and premium.
-2. "sidebar": A beautifully structured markdown report (max 300 words) with headers, lists, or tables for quick reading.
+Return ONLY a valid JSON object matching the following structure. Do not output raw markdown directly under key names; wrap all markdown inside a standard JSON string.
+
+{{
+  "chat": "A clean, highly conversational text block that will be read aloud. Must NOT contain any markdown, bullet points, asterisks, or bold tags. Keep it fluid, natural, and premium.",
+  "sidebar": "A beautifully structured markdown report (max 300 words) with headers, lists, or tables for quick reading. IMPORTANT: This must be a single, valid JSON-escaped string with all newlines escaped as \\n and double quotes escaped as \\\"."
+}}
 """
 
     messages = [
@@ -289,6 +372,8 @@ Return ONLY a JSON object with exactly two keys:
         {"role": "user", "content": "Generate the startup briefing now, Sir."}
     ]
     
+    chat_text = ""
+    sidebar_markdown = ""
     try:
         result = await ai_service.get_chat_completion(
             messages,
@@ -296,12 +381,36 @@ Return ONLY a JSON object with exactly two keys:
             response_format={"type": "json_object"},
             temperature=0.7
         )
-        data = json.loads(result or "{}")
-        chat_text = (data.get("chat") or "").strip()
-        sidebar_markdown = (data.get("sidebar") or "").strip()
+        chat_text, sidebar_markdown = _extract_chat_and_sidebar_fallback(result or "{}")
     except Exception as e:
-        chat_text = f"Apologies, Sir. I encountered an issue compiling the intelligence briefing: {e}"
-        sidebar_markdown = f"### System Error\nFailed to compile briefing.\n\nError: {e}"
+        # Check if the error has a failed_generation field (which is common in 400 Json Validate errors)
+        failed_gen = None
+        if hasattr(e, "body") and isinstance(e.body, dict):
+            failed_gen = e.body.get("error", {}).get("failed_generation")
+        
+        if not failed_gen:
+            # Try to extract from string representation of exception
+            err_str = str(e)
+            match = re.search(r"'failed_generation':\s*'(.*?)'\s*(?:}|\n)", err_str, re.DOTALL)
+            if match:
+                failed_gen = match.group(1)
+            else:
+                match_double = re.search(r'"failed_generation":\s*"(.*?)"\s*(?:}|\n)', err_str, re.DOTALL)
+                if match_double:
+                    failed_gen = match_double.group(1)
+                    
+        if failed_gen:
+            try:
+                # Normalize double-escaped newlines and double-quotes
+                failed_gen_normalized = failed_gen.replace('\\\\n', '\\n').replace('\\\\"', '\\"')
+                failed_gen_clean = failed_gen_normalized.encode().decode('unicode-escape', errors='ignore')
+                chat_text, sidebar_markdown = _extract_chat_and_sidebar_fallback(failed_gen_clean)
+            except Exception as parse_err:
+                print(f"Failed to parse failed_generation fallback: {parse_err}")
+                
+        if not chat_text or not sidebar_markdown:
+            chat_text = f"Apologies, Sir. I encountered an issue compiling the intelligence briefing: {e}"
+            sidebar_markdown = f"### System Error\nFailed to compile briefing.\n\nError: {e}"
         
     if not chat_text:
         chat_text = "Briefing compiled, Sir. Check the sidebar for details."

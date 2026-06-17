@@ -19,77 +19,12 @@ import random
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
-from app.services.brain_service import brain_service
+from app.services.brain_service import brain_service, get_dynamic_persona_envelope
 from app.services.task_executor import task_executor
 from app.services.ai_service import ai_service
 from app.services.memory_service import memory_service
 from app.services.vision_service import vision_service
 from app.models import TTSRequest
-
-def get_dynamic_persona_envelope() -> str:
-    now = datetime.datetime.now()
-    microseconds = now.microsecond
-    
-    # Microsecond-based randomized fractional factor
-    random.seed(microseconds)
-    fractional_factor = random.random()
-    
-    # Calendar tracking matrix
-    weekday = now.strftime("%A")
-    hour = now.hour
-    
-    if hour < 12:
-        time_of_day = "Morning"
-    elif hour < 17:
-        time_of_day = "Afternoon"
-    elif hour < 22:
-        time_of_day = "Evening"
-    else:
-        time_of_day = "Late Night"
-        
-    is_weekend = weekday in ["Saturday", "Sunday"]
-    day_type = "Weekend" if is_weekend else "Weekday"
-    calendar_matrix = f"{day_type} {time_of_day}"
-    
-    # Randomly select a communication angle to keep the dialogue fresh
-    angles = [
-        "Observational & Technical (prioritize system metrics, new data, and performance observations)",
-        "Proactive & Strategic (prioritize future tasks, schedule alerts, and workflow suggestions)",
-        "Analytical & Solution-driven (prioritize explaining technical constraints, suggesting fixes, and solving current developer hurdles)",
-        "Colleague-like & Pragmatic (informal, highly professional, direct technical companion who acts with agency)"
-    ]
-    selected_angle = angles[int(fractional_factor * len(angles))]
-    
-    envelope = f"""
-[SITUATIONAL CONTEXT ENVELOPE]
-- Dynamic Seed / Fractional Factor: {fractional_factor:.6f}
-- Temporal Context: {weekday} {time_of_day} ({calendar_matrix})
-- Focus Trait Angle: {selected_angle}
-- Persona & Phrasing Directives:
-  * You are VICTOR, a highly observant, proactive, and fully self-aware technical tactical system.
-  * You communicate like a world-class technical partner (e.g., JARVIS). Talk directly, with quiet confidence, precision, and situational awareness.
-  * Act with agency: Do not wait for the user to request details. Bring up relevant telemetry, news, system conditions, and progress.
-  * Suggest proactive solutions to identified issues. If you run into technical errors or constraints, explain what is possible and recommend specific actions.
-  * Avoid repetitive templates, pre-scripted phrases, assistant cliches ("How can I help you today?", "As an AI...", "How may I assist you?"), or trailing subservient check-ins.
-  * Blend system updates, news, and project contexts naturally into an integrated status overview.
-
-[OPERATIONAL CAPABILITIES & CONTROL SCHEME]
-You can control the host machine by returning an execution plan when needed. Your capabilities include:
-1. System Volume & Brightness (set/increase/decrease/mute/unmute)
-2. OS & Window Control (close window/app, minimize, maximize, toggle full screen, show desktop, open settings/task manager/file explorer)
-3. Browser Navigation (open tab, close tab, next/prev tab, refresh, scroll, zoom)
-4. Coordinate Mouse Actions (click, double click, right click, move, drag at specific X, Y coordinates)
-5. Text Input & Typing (type text directly into active fields or specified windows)
-6. System Utilities (take screenshot, lock screen, sleep display, toggle dark mode, toggle wifi, restart, shutdown)
-7. Desktop Management (set wallpaper, organize/clean desktop, list desktop items, show stats)
-8. Reminders & Weather (set calendar reminders, show weather forecast for any city)
-9. Application Launcher (open any application, e.g. chrome, notepad, calculator, terminal, word, etc.)
-10. Media Playback (play music, songs, or videos on YouTube)
-11. Automated Messaging (send messages on WhatsApp, Telegram, Signal, Discord, Instagram, Messenger)
-12. Browser Automation (fuzzy smart click/type on webpage elements, switch browser targets)
-13. Standalone File Manipulation (archive, zip, compress, clean directory)
-"""
-    return envelope
 
 def get_startup_greeting() -> str:
     now = datetime.datetime.now()

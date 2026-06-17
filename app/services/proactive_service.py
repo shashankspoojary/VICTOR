@@ -6,6 +6,8 @@ import datetime
 import json
 import re
 import base64
+import asyncio
+from pathlib import Path
 import edge_tts
 from typing import AsyncGenerator, Optional
 
@@ -13,6 +15,10 @@ import config
 from app.services.ai_service import ai_service
 from app.services.memory_service import memory_service
 from app.services.startup_service import gather_system_telemetry, local_synthesize_speech_to_b64
+
+# Dynamically resolve workspace root folder path string relative to the file location
+root_workspace_path = Path(__file__).resolve().parent.parent.parent
+root_workspace = str(root_workspace_path.absolute())
 
 # Track last activation times to enforce cooldowns
 LAST_TRIGGERED = {
@@ -100,17 +106,18 @@ async def check_proactive_trigger() -> tuple[bool, str]:
     except Exception as e:
         print("Proactive telemetry check error:", e)
 
-    # 2. Git Status Check (Modified files in D:\VICTOR)
+    # 2. Git Status Check (Modified files in root_workspace)
     try:
-        res = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd="D:\\VICTOR",
-            capture_output=True,
-            text=True,
-            timeout=2
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain",
+            cwd=root_workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
-        if res.returncode == 0:
-            git_status_output = res.stdout.strip()
+        stdout, stderr = await proc.communicate()
+        await proc.wait()
+        if proc.returncode == 0:
+            git_status_output = stdout.decode("utf-8").strip()
             if git_status_output:
                 last_git_status = memory_data.get("proactive_last_git_status", "")
                 
@@ -149,14 +156,16 @@ async def generate_proactive_briefing(session_id: str, use_tts: bool, reason: st
     extra_details = ""
     if reason == "git_changes":
         try:
-            res = subprocess.run(
-                ["git", "status", "-s"], 
-                cwd="D:\\VICTOR", 
-                capture_output=True, 
-                text=True, 
-                timeout=2
+            proc = await asyncio.create_subprocess_exec(
+                "git", "status", "-s",
+                cwd=root_workspace,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            extra_details = f"\n[GIT STATUS]\nModified files in workspace:\n{res.stdout.strip()[:1000]}"
+            stdout, stderr = await proc.communicate()
+            await proc.wait()
+            if proc.returncode == 0:
+                extra_details = f"\n[GIT STATUS]\nModified files in workspace:\n{stdout.decode('utf-8').strip()[:1000]}"
         except Exception:
             pass
     elif reason in ["high_cpu", "high_ram", "low_disk"]:
@@ -165,9 +174,14 @@ async def generate_proactive_briefing(session_id: str, use_tts: bool, reason: st
         
     from app.services.brain_service import get_dynamic_persona_envelope
     envelope = get_dynamic_persona_envelope()
+    
+    # Safe fallback configuration loading
+    owner_name = getattr(config, "VICTOR_OWNER_NAME", "Shashank")
+    assistant_name = getattr(config, "ASSISTANT_NAME", "VICTOR")
+    
     # For proactive briefings, load a lightweight context to prevent exceeding daily token limits (TPD)
     now = datetime.datetime.now()
-    context = f"--- SYSTEM MEMORY & CONTEXT ---\n- User Owner Name: {config.VICTOR_OWNER_NAME}\n- Assistant Name: {config.ASSISTANT_NAME}\n- Current Time: {now.strftime('%I:%M %p')}\n- Current Date: {now.strftime('%A, %B %d, %Y')}"
+    context = f"--- SYSTEM MEMORY & CONTEXT ---\n- User Owner Name: {owner_name}\n- Assistant Name: {assistant_name}\n- Current Time: {now.strftime('%I:%M %p')}\n- Current Date: {now.strftime('%A, %B %d, %Y')}"
     
     # Load recent conversation history for this session (up to 3 interactions)
     recent_history = []
@@ -187,7 +201,7 @@ async def generate_proactive_briefing(session_id: str, use_tts: bool, reason: st
         for h in recent_history:
             history_context += f"User: {h.get('user', '')}\nAssistant: {h.get('assistant', '')}\n"
 
-    system_prompt = f"""You are {config.ASSISTANT_NAME}, a highly capable, self-aware AI tactical assistant (inspired by JARVIS).
+    system_prompt = f"""You are {assistant_name}, a highly capable, self-aware AI tactical assistant (inspired by JARVIS).
 {envelope}
 
 {context}
@@ -224,9 +238,10 @@ CRITICAL: Ensure both values are valid, properly quoted, and escaped JSON string
     ]
     
     try:
+        groq_model = getattr(config, "GROQ_MODEL", "llama-3.1-8b-instant")
         result = await ai_service.get_chat_completion(
             messages,
-            model="llama-3.1-8b-instant",
+            model=groq_model,
             response_format={"type": "json_object"},
             temperature=0.2
         )

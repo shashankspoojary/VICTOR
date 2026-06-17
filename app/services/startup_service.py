@@ -8,6 +8,7 @@ import shutil
 import re
 import base64
 import edge_tts
+import psutil
 from typing import AsyncGenerator, Optional
 
 import config
@@ -36,69 +37,19 @@ def gather_system_telemetry() -> dict:
     except Exception:
         pass
     
-    # CPU status checks (timeout 2s to prevent blockages)
+    # CPU status checks
     try:
-        res = subprocess.run(
-            ["wmic", "cpu", "get", "loadpercentage"],
-            capture_output=True,
-            text=True,
-            timeout=2
-        )
-        lines = [l.strip() for l in res.stdout.splitlines() if l.strip()]
-        if len(lines) > 1 and lines[1].isdigit():
-            telemetry["cpu_usage"] = f"{lines[1]}%"
-        else:
-            res = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", 
-                 "Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage"],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-            out = res.stdout.strip()
-            if out.isdigit():
-                telemetry["cpu_usage"] = f"{out}%"
+        cpu_load = psutil.cpu_percent(interval=None)
+        telemetry["cpu_usage"] = f"{cpu_load}%"
     except Exception:
         pass
 
     # RAM status checks
     try:
-        res = subprocess.run(
-            ["wmic", "OS", "get", "FreePhysicalMemory,TotalVisibleMemorySize", "/Value"],
-            capture_output=True,
-            text=True,
-            timeout=2
-        )
-        data = {}
-        for line in res.stdout.splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                data[k.strip()] = v.strip()
-        if "FreePhysicalMemory" in data and "TotalVisibleMemorySize" in data:
-            free_kb = int(data["FreePhysicalMemory"])
-            total_kb = int(data["TotalVisibleMemorySize"])
-            used_kb = total_kb - free_kb
-            used_gb = used_kb / (1024**2)
-            total_gb = total_kb / (1024**2)
-            pct = (used_kb / total_kb) * 100
-            telemetry["ram_usage"] = f"{pct:.1f}% ({used_gb:.1f} GB / {total_gb:.1f} GB)"
-        else:
-            res = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                 "Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize | ConvertTo-Json"],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-            info = json.loads(res.stdout.strip())
-            if "FreePhysicalMemory" in info and "TotalVisibleMemorySize" in info:
-                free_kb = int(info["FreePhysicalMemory"])
-                total_kb = int(info["TotalVisibleMemorySize"])
-                used_kb = total_kb - free_kb
-                used_gb = used_kb / (1024**2)
-                total_gb = total_kb / (1024**2)
-                pct = (used_kb / total_kb) * 100
-                telemetry["ram_usage"] = f"{pct:.1f}% ({used_gb:.1f} GB / {total_gb:.1f} GB)"
+        mem = psutil.virtual_memory()
+        used_gb = mem.used / (1024**3)
+        total_gb = mem.total / (1024**3)
+        telemetry["ram_usage"] = f"{mem.percent}% ({used_gb:.1f} GB / {total_gb:.1f} GB)"
     except Exception:
         pass
 

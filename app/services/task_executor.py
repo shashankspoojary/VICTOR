@@ -17,6 +17,7 @@ import shutil
 import urllib.request
 from urllib.parse import quote_plus
 from pathlib import Path
+root_workspace = str(Path(__file__).resolve().parent.parent.parent)
 
 import time
 
@@ -799,7 +800,7 @@ class TaskExecutor:
                 res = await asyncio.to_thread(
                     subprocess.run,
                     args,
-                    cwd="D:\\VICTOR",
+                    cwd=root_workspace,
                     capture_output=True,
                     text=True,
                     timeout=15

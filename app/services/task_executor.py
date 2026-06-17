@@ -769,6 +769,15 @@ class TaskExecutor:
                 cmd = "git " + step[4:].strip()
             return {"action": "git_run", "cmd": cmd}
 
+        # --- App/Website Idea Research ---
+        if "ideas for apps/websites" in s or "idea research" in s or "app ideas" in s or "website ideas" in s or "software ideas" in s or s.startswith("research ideas for apps/websites:"):
+            focus_match = re.search(r"(?:research ideas for apps/websites:|ideas for apps/websites|app ideas|website ideas|software ideas):\s*['\"]?(.+?)['\"]?\s*$", step, re.IGNORECASE)
+            focus = focus_match.group(1).strip() if focus_match else ""
+            if not focus:
+                cleaned_step = re.sub(r"^(research ideas for apps/websites|ideas for apps|website ideas|find app ideas|search for app ideas|research app ideas|app and website idea research)\b", "", step, flags=re.IGNORECASE).strip(" :'-'\"")
+                focus = cleaned_step
+            return {"action": "research_ideas", "focus": focus}
+
         # --- Research (default for info/search queries) ---
         query = re.sub(
             r'^(search for|search|look up|find|research|get|check|what is|tell me about)\s+',
@@ -960,6 +969,20 @@ class TaskExecutor:
                 await event_queue.put({"type": "token", "text": f"Playing '{param}' on YouTube now, Sir."})
             else:
                 self._open_url_in_browser(target_url)
+
+        elif action == "research_ideas":
+            from app.services.idea_researcher import idea_researcher
+            focus = primitive.get("focus", "")
+            
+            # Send status update
+            if event_queue:
+                await event_queue.put({"type": "task_status", "step": "Scanning Reddit, Quora, and IndieHackers for market gaps...", "status": "running"})
+            
+            detailed_explanation = await idea_researcher.run_research(focus, event_queue)
+            
+            # Send the detailed markdown explanation back to the chat stream
+            if event_queue:
+                await event_queue.put({"type": "token", "text": detailed_explanation})
 
         elif action == "research":
             try:

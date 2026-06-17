@@ -5,7 +5,7 @@ from rich.console import Console
 
 console = Console()
 
-def with_retry_and_rotation(rotator, max_retries=3, base_delay=1.0):
+def with_retry_and_rotation(rotator, max_retries=6, base_delay=1.0):
     """
     Decorator that intercepts API calls. If a rate limit or timeout exception
     occurs, it calls the rotator to swap keys and retries the operation.

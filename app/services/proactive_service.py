@@ -75,7 +75,8 @@ async def check_proactive_trigger() -> tuple[bool, str]:
         cpu_str = telemetry.get("cpu_usage", "0%")
         if cpu_str.endswith("%"):
             try:
-                cpu_val = int(cpu_str[:-1])
+                # Convert the parsed string to a float first before evaluating against threshold values
+                cpu_val = float(cpu_str[:-1])
                 if cpu_val >= 80 and (now - LAST_TRIGGERED["high_cpu"] > COOLDOWNS["high_cpu"]):
                     await _update_trigger_timestamp("high_cpu", now, memory_data)
                     return True, "high_cpu"

@@ -9,6 +9,9 @@ import re
 import base64
 import edge_tts
 import psutil
+# Initialize CPU usage tracking sample on module load to prevent inaccurate 0.0% readings on first telemetry check
+psutil.cpu_percent(interval=None)
+
 from typing import AsyncGenerator, Optional
 
 import config
